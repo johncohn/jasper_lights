@@ -39,7 +39,7 @@ Moving patterns (White Comet, Falling Rings, Map Check) track positions in 1/16t
 
 The strand hangs on a cone: a small hanging ring **A** at the top, six strings **A-1 … A-6** down to six equally spaced points **1 … 6** on a wooden ring (~9.5" outside diameter, strings ~7"). LEDs are 1.5 cm apart. The ring arcs between points are **1-2, 2-3, 3-4, 4-5, 5-6, 6-1**.
 
-The strand runs `A → 5 → 4 → 3 → A → 4 → 3 → 2 → 1 → A → 2 → 1 → 6 → 5 → A → 6 → 1 → 2 → 3`, with a jumper at A between LEDs 99 and 100. That covers A-5, 3-4, 2-3 and 6-1 twice and 1-2 three times; the other segments once. LEDs 197-199 are past the end of the structure (after point 3) and are not mapped, so structure patterns leave them dark. Each pass along one segment is a *run* in `defaultRuns[]`, with its first and last LED index. `buildMap()` turns the runs into per-LED data that patterns can use:
+The strand runs `A → 5 → 4 → 3 → A → 4 → 3 → 2 → 1 → A → 2 → 1 → 6 → 5 → A → 6 → 1 → 2 → 3`, with a jumper at A between LEDs 99 and 100. That covers A-5, 3-4, 2-3 and 6-1 twice and 1-2 three times; the other segments once. LEDs 197-199 are past the end of the structure (after point 3) and are not mapped, so structure patterns leave them dark. Each pass along one segment is a *run* in `defaultRuns[]`, with its first and last LED index, plus (for strings) a `skip` count of hidden LEDs at the top. `buildMap()` turns the runs into per-LED data that patterns can use:
 
 | Array        | Meaning |
 |--------------|---------|
@@ -69,7 +69,8 @@ Serial commands outside tuning: `tune`, `map` (print the current map as C code),
 
 - `show A-5` / `show 1-2`: lights every run covering that segment in white, with **green at the segment's start** and **red at its end** as the map understands them. Strings start at the top (A); ring arcs start at the lower-numbered point (6-1 starts at 6). A run with green at the wrong end is mapped backwards. The serial monitor lists each lit run and its LEDs.
 - `run N`: lights just run N (1-18), the same way.
-- `pixel N`: lights the Nth LED from the top (0 = top) on every string, including both A-5 strips, to check they line up. `+` / `-` step down / up. Strings with fewer than N+1 LEDs are listed as not lit.
+- `pixel N`: lights slot N from the top (0 = top) on every string, including both A-5 strips, to check they line up. `+` / `-` step down / up. The listing shows each string's run number, LED count and skip.
+- `skip R K`: hides the top K LEDs of string run R (they stay dark), spacing the rest from A down to the ring; the bottom LED never moves. Negative K leaves a gap at the top instead. Saved to flash immediately. Use it when strings have extra LEDs bunched up at the hanging ring, so heights line up across strings. Each A-5 strip is its own run (1 and 14), so each gets its own skip. At 1.5 cm spacing a 7" string shows about 12 LEDs.
 - `off` or the A button: back to the patterns.
 
 If you've lost track of which point is which, `show A-1`, `show A-2`, … find the points and which way the numbers go around the ring.

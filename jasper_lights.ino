@@ -1,6 +1,6 @@
 /// @file    jasper_lights.ino
 /// @brief   Simple M5StickC Plus2 LED blinker for Jasper
-/// @version 1.4.0
+/// @version 1.5.0
 /// @date    2026-09-26
 /// @author  John Cohn (patterns adapted from m5lights_v1 / Larry's patterns)
 ///
@@ -8,6 +8,7 @@
 /// B button (side button): cycle through 6 brightness levels
 ///
 /// @changelog
+/// v1.5.0 - Per-string top skip (hidden LEDs at A) so heights line up; serial 'skip R K'
 /// v1.4.0 - Smoother White Comet, Falling Rings and Map Check (sub-LED positions,
 ///          soft leading edge); slower twinkles; serial 'pixel N' alignment check
 /// v1.3.1 - Fixed strand path after the jumper (6 -> 5 -> A -> 6, not 6 -> A -> 5 -> 6);
@@ -26,7 +27,7 @@
 #include <FastLED.h>
 #include <Preferences.h>
 
-#define VERSION "1.4.0"
+#define VERSION "1.5.0"
 
 // Hardware config
 #define LED_PIN 32
@@ -146,6 +147,9 @@ void hsvToRgb(int h, byte s, byte v, byte *r, byte *g, byte *b) {
 struct Run {
   uint8_t from, to;    // Node the strand starts this run at, and ends at
   int16_t start, end;  // First and last LED index (inclusive)
+  int16_t skip;        // Strings only: LEDs at the top hidden in dead space (dark).
+                       // Negative leaves a gap at the top instead. The bottom LED
+                       // stays at the bottom either way. Set with "skip" over serial.
 };
 
 const Run defaultRuns[] = {
@@ -220,11 +224,16 @@ void buildMap() {
     bool flip;
     uint8_t seg = segmentFor(runs[r].from, runs[r].to, flip);
     int n = runs[r].end - runs[r].start + 1;
+    int skip = IS_STRING(seg) ? runs[r].skip : 0;
+    int slots = n - skip;  // Evenly spaced positions from the segment's start to its end
+    if (slots < 1) continue;
     for (int i = 0; i < n; i++) {
       int led = runs[r].start + i;
       if (led < 0 || led >= NUM_LEDS) continue;
-      uint8_t pos = (2 * i + 1) * 256 / (2 * n);  // Center of each LED's share
-      if (flip) pos = 255 - pos;
+      int p = flip ? n - 1 - i : i;  // Index from the segment's start (top of a string)
+      int q = p - skip;
+      if (q < 0) continue;           // Hidden at the top: left unmapped (dark)
+      uint8_t pos = (2 * q + 1) * 256 / (2 * slots);  // Center of each LED's share
       ledSeg[led] = seg;
       ledPos[led] = pos;
       if (IS_STRING(seg)) {
@@ -785,13 +794,16 @@ Preferences prefs;
 
 void loadRuns() {
   memcpy(runs, defaultRuns, sizeof(runs));
-  int16_t saved[NUM_RUNS * 2];
+  int16_t saved[NUM_RUNS * 3];  // start, end, skip per run
   prefs.begin("jlmap", true);
-  if (prefs.getBytesLength("runs") == sizeof(saved)) {
-    prefs.getBytes("runs", saved, sizeof(saved));
+  size_t len = prefs.getBytesLength("runs");
+  int fields = (len == sizeof(saved)) ? 3 : (len == NUM_RUNS * 2 * sizeof(int16_t)) ? 2 : 0;
+  if (fields) {  // Older saves have start and end only
+    prefs.getBytes("runs", saved, len);
     for (int r = 0; r < NUM_RUNS; r++) {
-      runs[r].start = saved[r * 2];
-      runs[r].end = saved[r * 2 + 1];
+      runs[r].start = saved[r * fields];
+      runs[r].end = saved[r * fields + 1];
+      if (fields == 3) runs[r].skip = saved[r * fields + 2];
     }
     Serial.println("Loaded tuned map from flash");
   }
@@ -800,10 +812,11 @@ void loadRuns() {
 }
 
 void saveRuns() {
-  int16_t saved[NUM_RUNS * 2];
+  int16_t saved[NUM_RUNS * 3];
   for (int r = 0; r < NUM_RUNS; r++) {
-    saved[r * 2] = runs[r].start;
-    saved[r * 2 + 1] = runs[r].end;
+    saved[r * 3] = runs[r].start;
+    saved[r * 3 + 1] = runs[r].end;
+    saved[r * 3 + 2] = runs[r].skip;
   }
   prefs.begin("jlmap", false);
   prefs.putBytes("runs", saved, sizeof(saved));
@@ -828,10 +841,10 @@ void printRuns() {
         runs[r].start != runs[r - 1].end + 1) {
       Serial.println("  // Gap");
     }
-    Serial.printf("  {%s, %s, %3d, %3d},  // %s -> %s, %d LEDs\n",
+    Serial.printf("  {%s, %s, %3d, %3d, %d},  // %s -> %s, %d LEDs\n",
                   runs[r].from == NODE_A ? "NODE_A" : nodeNames[runs[r].from],
                   runs[r].to == NODE_A ? "NODE_A" : nodeNames[runs[r].to],
-                  runs[r].start, runs[r].end,
+                  runs[r].start, runs[r].end, runs[r].skip,
                   nodeNames[runs[r].from], nodeNames[runs[r].to],
                   runs[r].end - runs[r].start + 1);
   }
@@ -968,9 +981,11 @@ void stopShow() {
   needsReset = true;
 }
 
-// LED index of pixel p (0 = top) on string run r, or -1 if the run is too short
+// LED index of slot p (0 = top, after skipping hidden LEDs) on string run r,
+// or -1 if there is no LED there
 int stringPixel(int r, int p) {
-  if (p > runs[r].end - runs[r].start) return -1;
+  p += runs[r].skip;
+  if (p < 0 || p > runs[r].end - runs[r].start) return -1;
   return (runs[r].to == NODE_A) ? runs[r].end - p : runs[r].start + p;
 }
 
@@ -982,17 +997,16 @@ void startPixel(int p) {
   showSeg = showRun = -1;
   showPixel = p;
   isFading = false;
-  Serial.printf("\nPixel %d from the top on every string (+ / - to step):\n", p);
+  Serial.printf("\nPixel %d from the top on every string (+ / - to step, skip R K to shift):\n", p);
   for (int r = 0; r < NUM_RUNS; r++) {
     if (!isStringRun(r)) continue;
     int string = (runs[r].from == NODE_A ? runs[r].to : runs[r].from);
     int led = stringPixel(r, p);
-    if (led < 0) {
-      Serial.printf("  A-%d (run %d): only %d LEDs, not lit\n", string, r + 1,
-                    runs[r].end - runs[r].start + 1);
-    } else {
-      Serial.printf("  A-%d (run %d): LED %d\n", string, r + 1, led);
-    }
+    int n = runs[r].end - runs[r].start + 1;
+    Serial.printf("  A-%d (run %2d, %2d LEDs, skip %2d): ", string, r + 1, n, runs[r].skip);
+    if (led >= 0) Serial.printf("LED %d\n", led);
+    else if (p + runs[r].skip < 0) Serial.println("gap at top, not lit");
+    else Serial.println("past the bottom, not lit");
   }
 }
 
@@ -1020,6 +1034,7 @@ void printHelp() {
   Serial.println("          reset = forget tuned map and use the defaults in the code");
   Serial.println("          show A-5 / show 1-2 = light a segment, run N = light run N (1-18),");
   Serial.println("          pixel N = light pixel N (0 = top) on every string, then + / - to step,");
+  Serial.println("          skip R K = hide K LEDs at the top of string run R (negative: gap),");
   Serial.println("          off = back to patterns");
 }
 
@@ -1036,6 +1051,18 @@ void handleCommand(char *cmd) {
       uint8_t seg = parseSegment(cmd + 5);
       if (seg == SEG_NONE) Serial.println("  ?? Segment should be like A-5 or 1-2");
       else startShow(seg, -1);
+    } else if (sscanf(cmd, "skip %d %d", &a, &b) == 2) {
+      int r = a - 1;
+      if (r < 0 || r >= (int)NUM_RUNS || !isStringRun(r)) {
+        Serial.println("  ?? skip R K: R must be a string run (see the pixel listing)");
+      } else if (b >= runs[r].end - runs[r].start + 1 || b < -20) {
+        Serial.println("  ?? Skip must be less than the run's LED count (and at least -20)");
+      } else {
+        runs[r].skip = b;
+        buildMap();
+        saveRuns();
+        startPixel(showPixel >= 0 ? showPixel : 0);
+      }
     } else if (sscanf(cmd, "pixel %d", &a) == 1) {
       if (a < 0) Serial.println("  ?? Pixel should be 0 or more");
       else startPixel(a);
