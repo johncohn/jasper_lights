@@ -10,13 +10,13 @@ The lights start in **auto mode**: a new pattern every minute (`AUTO_PATTERN_MS`
   - **Short press**: next pattern, and switch to **manual mode** (the lights stay on the chosen pattern). The screen shows AUTO or MAN.
   - **Hold 1.5 s** and release: back to auto mode.
   - **Hold 3.5 s**: turn **off** (LEDs dark, screen off, ESP32 in deep sleep). The screen tells you what releasing will do.
-  - **Press while off**: turn back on, in auto mode, with the saved brightness and speed.
+  - **Press while off**: turn back on.
 - **B button** (right side): cycle through 6 brightness levels (4, 8, 15, 25, 40, 60), then back to the lowest. Starts at level 4 (25).
 - **Power button** (left side, short press): cycle through 6 speed levels: 0.4x, 1x, 2x, 3.5x, 6x, 10x. Starts at level 2 (1x, the speed the patterns were designed at). Every pattern scales its motion by this, except the cross-fade and Map Check. Holding the power button ~6 s still turns the M5 off.
 
 The screen shows the current pattern, and brightness and speed as rows of boxes.
 
-Brightness, speed, the current pattern and auto/manual mode are saved in flash whenever they change and restored at power-up or when turned back on.
+Brightness, speed and the current pattern are saved in flash whenever they change and restored at power-up or when turned back on. It always starts in auto mode.
 
 "Off" keeps the M5's power-hold pin on during deep sleep, so the M5 wakes with the A button instead of needing the power button. The Plus2 can't switch off its 5V output in software, so the LED strip stays powered (dark) while off and its idle current is the main battery drain.
 

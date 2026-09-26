@@ -1,6 +1,6 @@
 /// @file    jasper_lights.ino
 /// @brief   Simple M5StickC Plus2 LED blinker for Jasper
-/// @version 1.8.2
+/// @version 1.8.3
 /// @date    2026-09-26
 /// @author  John Cohn (patterns adapted from m5lights_v1 / Larry's patterns)
 ///
@@ -12,6 +12,7 @@
 /// Power button (left side): cycle through 6 speed levels
 ///
 /// @changelog
+/// v1.8.3 - Always start in auto mode, at power-up too
 /// v1.8.2 - Shorter A holds: 1.5 s for auto mode, 3.5 s for off
 /// v1.8.1 - Turning back on with A always starts in auto mode
 /// v1.8.0 - Brightness, speed, pattern and mode saved and restored at power-up;
@@ -42,7 +43,7 @@
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
 
-#define VERSION "1.8.2"
+#define VERSION "1.8.3"
 
 // Hardware config
 #define LED_PIN 32
@@ -910,14 +911,13 @@ void renderPattern() {
 }
 
 // ===== SAVED SETTINGS =====
-// Brightness, speed, pattern and auto/manual mode are saved in flash whenever they
-// change, and restored at power-up. The pattern is saved by name, so adding or
+// Brightness, speed and pattern are saved in flash whenever they change, and
+// restored at power-up. It always starts in auto mode. The pattern is saved by name, so adding or
 // reordering patterns doesn't restore the wrong one.
 void saveSettings() {
   prefs.begin("jlstate", false);
   prefs.putUChar("bright", brightnessIndex);
   prefs.putUChar("speed", speedIndex);
-  prefs.putBool("auto", autoMode);
   prefs.putString("pattern", patternNames[currentPattern]);
   prefs.end();
 }
@@ -926,7 +926,6 @@ void loadSettings() {
   prefs.begin("jlstate", true);
   brightnessIndex = min((int)prefs.getUChar("bright", brightnessIndex), (int)NUM_BRIGHTNESS_LEVELS - 1);
   speedIndex = min((int)prefs.getUChar("speed", speedIndex), (int)NUM_SPEED_LEVELS - 1);
-  autoMode = prefs.getBool("auto", true);
   String name = prefs.getString("pattern", "");
   prefs.end();
 
@@ -1443,7 +1442,6 @@ void setup() {
 
   shufflePlayOrder();
   loadSettings();
-  if (wokeFromOff) autoMode = true;  // Turning back on with A always starts in auto mode
   FastLED.setBrightness(brightnessLevels[brightnessIndex]);
   patternStartTime = millis();
   M5.BtnA.setHoldThresh(AUTO_PRESS_MS);
