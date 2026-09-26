@@ -25,6 +25,7 @@ LED controller for an M5StickC Plus2 driving a 200-LED WS2811 strand wrapped aro
 | 11 | Rainbow Spiral | Rainbow around the ring, twisting up the strings, slowly turning |
 | 12 | Slow Orbit     | One or two soft pastel glows circling the structure, lighting each string as they pass |
 | 13 | Ripples        | Soft pastel waves drifting down the strings; the ring glows as each arrives |
+| 14 | Map Check      | Diagnostic, repeats every 20 s: whole structure red, green, blue (2 s each), then white dots moving from A down all strings together |
 
 Patterns 8-13 use the structure map and are all slow and gentle; the others treat the strand as one long line.
 
@@ -61,6 +62,14 @@ Segment Map colors: strings A-1..A-6 are red, yellow, green, cyan, blue, magenta
 Changing a run's end also moves the next run's start if they were touching (and the same for start). When you finish, the map is saved to flash and printed as C code; paste it over `defaultRuns[]` to make it permanent. A saved map overrides `defaultRuns[]` until you type `reset`.
 
 Serial commands outside tuning: `tune`, `map` (print the current map as C code), `reset` (forget the saved map and use `defaultRuns[]`).
+
+### Checking the map
+
+- `show A-5` / `show 1-2`: lights every run covering that segment in white, with **green at the segment's start** and **red at its end** as the map understands them. Strings start at the top (A); ring arcs start at the lower-numbered point (6-1 starts at 6). A run with green at the wrong end is mapped backwards. The serial monitor lists each lit run and its LEDs.
+- `run N`: lights just run N (1-18), the same way.
+- `off` or the A button: back to the patterns.
+
+If you've lost track of which point is which, `show A-1`, `show A-2`, … find the points and which way the numbers go around the ring.
 
 ## Hardware config (top of `jasper_lights.ino`)
 

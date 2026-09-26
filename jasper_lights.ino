@@ -175,6 +175,10 @@ const char* nodeNames[] = { "A", "1", "2", "3", "4", "5", "6" };
 bool tuning = false;
 int tuneRun = 0;
 
+// Serial "show" state (see SEGMENT VIEWER below): -1 = not showing
+int showSeg = -1;  // Show every run covering this segment
+int showRun = -1;  // Or show just this run
+
 // Segments, independent of how many times the strand covers them:
 //   0-5  = strings A-1..A-6
 //   6-11 = ring arcs 1-2, 2-3, 3-4, 4-5, 5-6, 6-1
@@ -606,6 +610,33 @@ void ripples(bool reset) {
   hue = (hue + 1) % 1536;
 }
 
+// Pattern 14: Diagnostic for the map. Repeats every 20 s:
+//   0-6 s:  whole structure pure red, then green, then blue (2 s each). Every
+//           LED should match; if some don't, those LEDs use a different color order.
+//   6-20 s: a white dot on every string moving from A down to the ring; the ring
+//           lights when they arrive. All dots, including both copies of A-5,
+//           should move together.
+void mapCheck(bool reset) {
+  static unsigned long startTime = 0;
+  if (reset) startTime = millis();
+  unsigned long t = (millis() - startTime) % 20000;
+
+  if (t < 6000) {
+    CRGB c = (t < 2000) ? CRGB::Red : (t < 4000) ? CRGB::Green : CRGB::Blue;
+    for (int i = 0; i < NUM_LEDS; i++) leds[i] = (ledSeg[i] == SEG_NONE) ? CRGB::Black : c;
+    return;
+  }
+
+  int dot = (t - 6000) * 280 / 14000;  // 0..279, past 255 so the ring stays lit a moment
+  for (int i = 0; i < NUM_LEDS; i++) {
+    bool on = false;
+    if (ledSeg[i] != SEG_NONE) {
+      on = IS_STRING(ledSeg[i]) ? abs(ledDown[i] - dot) < 12 : dot >= 245;
+    }
+    leds[i] = on ? CRGB::White : CRGB::Black;
+  }
+}
+
 // ===== PATTERN LIST =====
 // To add a pattern: write a function like the ones above, then add it here
 // and give it a name in patternNames[].
@@ -613,13 +644,14 @@ typedef void (*Pattern)(bool reset);
 Pattern gPatterns[] = {
   solidColor, rainbow, sineWaveChase,
   bwStripes, starryNight, whiteComet, breathe, pastelTwinkle,
-  segmentMap, fallingRings, risingRainbow, rainbowSpiral, slowOrbit, ripples
+  segmentMap, fallingRings, risingRainbow, rainbowSpiral, slowOrbit, ripples,
+  mapCheck
 };
 const char* patternNames[] = {
   "Solid", "Rainbow", "Sine Chase",
   "B&W Stripes", "Starry Night", "White Comet", "Breathe", "Pastel Twinkle",
   "Segment Map", "Falling Rings", "Rising Rainbow", "Rainbow Spiral", "Slow Orbit",
-  "Ripples"
+  "Ripples", "Map Check"
 };
 
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
@@ -670,6 +702,20 @@ void renderPattern() {
 // ===== DISPLAY =====
 // Screen is 240x135 in landscape
 void updateDisplay() {
+  if (!tuning && (showSeg >= 0 || showRun >= 0)) {
+    M5.Display.fillScreen(DARKGREEN);
+    M5.Display.setTextColor(WHITE);
+    M5.Display.setTextSize(2);
+    M5.Display.drawString("SHOWING", 10, 6);
+    M5.Display.setTextColor(YELLOW);
+    if (showSeg >= 0) M5.Display.drawString(String("Segment ") + segmentNames[showSeg], 10, 34);
+    else M5.Display.drawString("Run " + String(showRun + 1), 10, 34);
+    M5.Display.setTextColor(WHITE);
+    M5.Display.setTextSize(1);
+    M5.Display.drawString("Green = start, red = end", 10, 70);
+    M5.Display.drawString("A: back to patterns", 10, 110);
+    return;
+  }
   if (tuning) {
     bool flip;
     uint8_t seg = segmentFor(runs[tuneRun].from, runs[tuneRun].to, flip);
@@ -797,6 +843,7 @@ void printTuneRun() {
 }
 
 void startTuning() {
+  showSeg = showRun = -1;
   tuning = true;
   tuneRun = 0;
   isFading = false;
@@ -841,9 +888,87 @@ void renderTune() {
   leds[runs[tuneRun].end] = CRGB::Red;
 }
 
+// ===== SEGMENT VIEWER =====
+// "show A-5" lights every run covering that segment; "run 14" lights one run.
+// Lit runs are white with green at the segment's start and red at its end, as the
+// map understands them: strings start at the top (A); ring arcs start at the
+// lower-numbered point (6-1 starts at 6). A run with green in the wrong place is
+// mapped backwards. "off" or the A button goes back to the patterns.
+
+// Parses "A-5", "5-a", "a5", "1-2", "2 1"... into a segment; returns SEG_NONE if invalid
+uint8_t parseSegment(const char *str) {
+  int nodes[2], n = 0;
+  for (const char *c = str; *c && n < 2; c++) {
+    if (*c == 'a' || *c == 'A') nodes[n++] = NODE_A;
+    else if (*c >= '1' && *c <= '6') nodes[n++] = *c - '0';
+    else if (*c != '-' && *c != ' ') return SEG_NONE;
+  }
+  if (n != 2 || nodes[0] == nodes[1]) return SEG_NONE;
+  if (nodes[0] != NODE_A && nodes[1] != NODE_A) {
+    // Ring points must be neighbors
+    if (nodes[1] != nodes[0] % 6 + 1 && nodes[0] != nodes[1] % 6 + 1) return SEG_NONE;
+  }
+  bool flip;
+  return segmentFor(nodes[0], nodes[1], flip);
+}
+
+bool runIsShown(int r) {
+  if (showRun >= 0) return r == showRun;
+  bool flip;
+  return showSeg >= 0 && segmentFor(runs[r].from, runs[r].to, flip) == showSeg;
+}
+
+void printShownRun(int r) {
+  bool flip;
+  uint8_t seg = segmentFor(runs[r].from, runs[r].to, flip);
+  // Start/end LEDs in segment order (green/red)
+  int first = flip ? runs[r].end : runs[r].start;
+  int last = flip ? runs[r].start : runs[r].end;
+  Serial.printf("  Run %d: %s -> %s, LEDs %d-%d (%d). Segment %s: green = LED %d, red = LED %d\n",
+                r + 1, nodeNames[runs[r].from], nodeNames[runs[r].to],
+                runs[r].start, runs[r].end, runs[r].end - runs[r].start + 1,
+                segmentNames[seg], first, last);
+}
+
+void startShow(int seg, int run) {
+  showSeg = seg;
+  showRun = run;
+  isFading = false;
+  if (seg >= 0) {
+    Serial.printf("\nShowing segment %s (%s). Green = %s, red = %s\n", segmentNames[seg],
+                  IS_STRING(seg) ? "string" : "ring arc",
+                  IS_STRING(seg) ? "top (A)" : "lower-numbered point",
+                  IS_STRING(seg) ? "bottom (ring)" : "higher-numbered point");
+  } else {
+    Serial.printf("\nShowing run %d\n", run + 1);
+  }
+  for (int r = 0; r < NUM_RUNS; r++) {
+    if (runIsShown(r)) printShownRun(r);
+  }
+}
+
+void stopShow() {
+  showSeg = showRun = -1;
+  needsReset = true;
+}
+
+void renderShow() {
+  fill_solid(leds, NUM_LEDS, CRGB::Black);
+  for (int r = 0; r < NUM_RUNS; r++) {
+    if (!runIsShown(r)) continue;
+    bool flip;
+    segmentFor(runs[r].from, runs[r].to, flip);
+    for (int i = runs[r].start; i <= runs[r].end; i++) leds[i] = CRGB::White;
+    leds[flip ? runs[r].end : runs[r].start] = CRGB::Green;
+    leds[flip ? runs[r].start : runs[r].end] = CRGB::Red;
+  }
+}
+
 void printHelp() {
   Serial.println("Commands: tune = tune the LED map, map = print the map,");
   Serial.println("          reset = forget tuned map and use the defaults in the code");
+  Serial.println("          show A-5 / show 1-2 = light a segment, run N = light run N (1-18),");
+  Serial.println("          off = back to patterns");
 }
 
 void handleCommand(char *cmd) {
@@ -854,6 +979,15 @@ void handleCommand(char *cmd) {
     if (strcasecmp(cmd, "tune") == 0) startTuning();
     else if (strcasecmp(cmd, "map") == 0) printRuns();
     else if (strcasecmp(cmd, "reset") == 0) resetRuns();
+    else if (strcasecmp(cmd, "off") == 0) stopShow();
+    else if (strncasecmp(cmd, "show ", 5) == 0) {
+      uint8_t seg = parseSegment(cmd + 5);
+      if (seg == SEG_NONE) Serial.println("  ?? Segment should be like A-5 or 1-2");
+      else startShow(seg, -1);
+    } else if (sscanf(cmd, "run %d", &a) == 1) {
+      if (a < 1 || a > (int)NUM_RUNS) Serial.printf("  ?? Run should be 1-%d\n", NUM_RUNS);
+      else startShow(-1, a - 1);
+    }
     else if (*cmd) printHelp();
     updateDisplay();
     return;
@@ -942,6 +1076,8 @@ void loop() {
     if (tuning) {
       char accept[] = "";
       handleCommand(accept);
+    } else if (showSeg >= 0 || showRun >= 0) {
+      stopShow();
     } else {
       nextPattern();
     }
@@ -953,6 +1089,7 @@ void loop() {
   }
 
   if (tuning) renderTune();
+  else if (showSeg >= 0 || showRun >= 0) renderShow();
   else renderPattern();
   FastLED.show();
 }
