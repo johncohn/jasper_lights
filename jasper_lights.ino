@@ -958,7 +958,7 @@ void updateDisplay() {
 
   M5.Display.setTextSize(1);
   M5.Display.drawString("A:next hold=auto  B:bright  PWR:speed", 10, 110);
-  M5.Display.drawString("v" VERSION, 10, 122);
+  M5.Display.drawString("v" VERSION " by zatar", 10, 122);
 }
 
 void setSpeed(int index) {
