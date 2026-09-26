@@ -1,6 +1,6 @@
 /// @file    jasper_lights.ino
 /// @brief   Simple M5StickC Plus2 LED blinker for Jasper
-/// @version 1.8.0
+/// @version 1.8.1
 /// @date    2026-09-26
 /// @author  John Cohn (patterns adapted from m5lights_v1 / Larry's patterns)
 ///
@@ -12,6 +12,7 @@
 /// Power button (left side): cycle through 6 speed levels
 ///
 /// @changelog
+/// v1.8.1 - Turning back on with A always starts in auto mode
 /// v1.8.0 - Brightness, speed, pattern and mode saved and restored at power-up;
 ///          hold A 2 s = auto mode, 5 s = off (deep sleep), press A to turn on
 /// v1.7.0 - Auto mode (new pattern every minute, long press A to return to it),
@@ -40,7 +41,7 @@
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
 
-#define VERSION "1.8.0"
+#define VERSION "1.8.1"
 
 // Hardware config
 #define LED_PIN 32
@@ -1441,6 +1442,7 @@ void setup() {
 
   shufflePlayOrder();
   loadSettings();
+  if (wokeFromOff) autoMode = true;  // Turning back on with A always starts in auto mode
   FastLED.setBrightness(brightnessLevels[brightnessIndex]);
   patternStartTime = millis();
   M5.BtnA.setHoldThresh(AUTO_PRESS_MS);

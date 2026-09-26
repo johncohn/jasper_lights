@@ -10,7 +10,7 @@ The lights start in **auto mode**: a new pattern every minute (`AUTO_PATTERN_MS`
   - **Short press**: next pattern, and switch to **manual mode** (the lights stay on the chosen pattern). The screen shows AUTO or MAN.
   - **Hold 2 s** and release: back to auto mode.
   - **Hold 5 s**: turn **off** (LEDs dark, screen off, ESP32 in deep sleep). The screen tells you what releasing will do.
-  - **Press while off**: turn back on.
+  - **Press while off**: turn back on, in auto mode, with the saved brightness and speed.
 - **B button** (right side): cycle through 6 brightness levels (4, 8, 15, 25, 40, 60), then back to the lowest. Starts at level 4 (25).
 - **Power button** (left side, short press): cycle through 6 speed levels: 0.4x, 1x, 2x, 3.5x, 6x, 10x. Starts at level 2 (1x, the speed the patterns were designed at). Every pattern scales its motion by this, except the cross-fade and Map Check. Holding the power button ~6 s still turns the M5 off.
 
