@@ -1,14 +1,19 @@
 /// @file    jasper_lights.ino
 /// @brief   Simple M5StickC Plus2 LED blinker for Jasper
-/// @version 1.6.0
+/// @version 1.7.0
 /// @date    2026-09-26
 /// @author  John Cohn (patterns adapted from m5lights_v1 / Larry's patterns)
 ///
-/// A button (big front button): next pattern (patterns cross-fade)
+/// Starts in auto mode: a new pattern every minute, in shuffled order.
+/// A button (big front button): next pattern, switching to manual mode (patterns
+///   cross-fade); hold 1 s to go back to auto mode
 /// B button (side button): cycle through 6 brightness levels
 /// Power button (left side): cycle through 6 speed levels
 ///
 /// @changelog
+/// v1.7.0 - Auto mode (new pattern every minute, long press A to return to it),
+///          shuffled pattern order, test patterns behind INCLUDE_TEST_PATTERNS, and
+///          B&W structure patterns: Cone Stripes, Pinwheel, B&W Spiral, Strings & Ring
 /// v1.6.0 - Power button cycles 6 speed levels (0.4x-10x, level 2 = original speed)
 /// v1.5.0 - Per-string top skip (hidden LEDs at A) so heights line up; serial 'skip R K'
 /// v1.4.0 - Smoother White Comet, Falling Rings and Map Check (sub-LED positions,
@@ -29,7 +34,7 @@
 #include <FastLED.h>
 #include <Preferences.h>
 
-#define VERSION "1.6.0"
+#define VERSION "1.7.0"
 
 // Hardware config
 #define LED_PIN 32
@@ -274,7 +279,7 @@ void buildMap() {
 // Each pattern draws one frame into leds[]. 'reset' is true on the first frame
 // after the pattern is selected, so it can pick fresh random parameters.
 
-// Pattern 0: Solid color slowly fading through the rainbow
+// Pattern: Solid color slowly fading through the rainbow
 void solidColor(bool reset) {
   static int hue = 0;
   static int carry = 0;
@@ -287,7 +292,7 @@ void solidColor(bool reset) {
   hue = wrapAdd(hue, speedStep(2, carry), 1536);
 }
 
-// Pattern 1: Rotating rainbow across the strand
+// Pattern: Rotating rainbow across the strand
 void rainbow(bool reset) {
   static int colorOffset = 0;
   static int totalHueSpan = 1536;
@@ -311,7 +316,7 @@ void rainbow(bool reset) {
   colorOffset = wrapAdd(colorOffset, speedStep(increment, carry), 1536);
 }
 
-// Pattern 2: Single-color sine waves with dark gaps, chasing along the strand
+// Pattern: Single-color sine waves with dark gaps, chasing along the strand
 void sineWaveChase(bool reset) {
   static int baseHue = 0;
   static int waveSpan = 720;
@@ -347,7 +352,7 @@ void sineWaveChase(bool reset) {
 // Newborns see high-contrast black & white best, so several of these use only
 // white on black. All of them move slowly.
 
-// Pattern 3: Wide black & white stripes drifting slowly along the strand
+// Pattern: Wide black & white stripes drifting slowly along the strand
 void bwStripes(bool reset) {
   static int stripeSpan = 720 * 5;  // 720 = one white + one black stripe
   static int increment = 2;
@@ -414,13 +419,13 @@ void twinkle(TwinkleState &state, bool reset, bool pastel) {
   }
 }
 
-// Pattern 4: White stars twinkling on black
+// Pattern: White stars twinkling on black
 void starryNight(bool reset) {
   static TwinkleState state;
   twinkle(state, reset, false);
 }
 
-// Pattern 5: One to three white comets with fading tails gliding on black
+// Pattern: One to three white comets with fading tails gliding on black
 void whiteComet(bool reset) {
   static int numComets = 1;
   static int tailLength = 20;
@@ -458,7 +463,7 @@ void whiteComet(bool reset) {
   if (position >= (long)NUM_LEDS * 16) position -= (long)NUM_LEDS * 16;
 }
 
-// Pattern 6: Whole strand slowly breathing a soft pastel color that drifts
+// Pattern: Whole strand slowly breathing a soft pastel color that drifts
 void breathe(bool reset) {
   static int hue = 0;
   static int phase = 0;
@@ -479,7 +484,7 @@ void breathe(bool reset) {
   hue = wrapAdd(hue, speedStep(1, carryHue), 1536);
 }
 
-// Pattern 7: Soft pastel lights twinkling on black
+// Pattern: Soft pastel lights twinkling on black
 void pastelTwinkle(bool reset) {
   static TwinkleState state;
   twinkle(state, reset, true);
@@ -506,7 +511,7 @@ CRGB segmentColor(uint8_t seg, byte v) {
   return gammaRGB(r, g, b);
 }
 
-// Pattern 8: Each string and ring arc in its own fixed color (see segmentColor()).
+// Test pattern: Each string and ring arc in its own fixed color (see segmentColor()).
 // Useful for checking the map: every copy of a doubled segment should match.
 void segmentMap(bool reset) {
   for (int i = 0; i < NUM_LEDS; i++) {
@@ -514,7 +519,7 @@ void segmentMap(bool reset) {
   }
 }
 
-// Pattern 9: A ring of light slides down all six strings at once, lands on the
+// Pattern: A ring of light slides down all six strings at once, lands on the
 // wooden ring and fades out. Sometimes it rises from the ring up to A instead.
 void fallingRings(bool reset) {
   static int pos = 0;      // Leading edge, in 1/16ths of ledDown units
@@ -552,7 +557,7 @@ void fallingRings(bool reset) {
   }
 }
 
-// Pattern 10: Rainbow from A down to the ring, drifting slowly up all strings together
+// Pattern: Rainbow from A down to the ring, drifting slowly up all strings together
 void risingRainbow(bool reset) {
   static long offset = 0;   // In 1/16ths of a hue unit
   static int span = 768;    // Hue change from A to the ring
@@ -576,7 +581,7 @@ void risingRainbow(bool reset) {
   offset = wrapAdd(offset, speedStep(8, carry), 1536 * 16);  // ~50 s per rainbow cycle at 1x
 }
 
-// Pattern 11: Rainbow around the ring, twisting up the strings, slowly turning
+// Pattern: Rainbow around the ring, twisting up the strings, slowly turning
 void rainbowSpiral(bool reset) {
   static long offset = 0;   // In 1/16ths of a hue unit
   static int twist = 512;   // Extra hue change from A to the ring
@@ -599,7 +604,7 @@ void rainbowSpiral(bool reset) {
   offset = wrapAdd(offset, speedStep(6, carry), 1536 * 16);  // ~70 s per turn at 1x
 }
 
-// Pattern 12: One or two soft pastel glows slowly circling the structure. Each
+// Pattern: One or two soft pastel glows slowly circling the structure. Each
 // string lights up as a glow passes it, with the ring glowing underneath.
 void slowOrbit(bool reset) {
   static long angle = 0;   // In 1/16ths of a ledAngle unit
@@ -639,7 +644,7 @@ void slowOrbit(bool reset) {
   hue = wrapAdd(hue, speedStep(1, carryHue), 1536);
 }
 
-// Pattern 13: Soft pastel waves drifting down the strings; the ring glows as each
+// Pattern: Soft pastel waves drifting down the strings; the ring glows as each
 // wave arrives
 void ripples(bool reset) {
   static int phase = 0;
@@ -666,7 +671,102 @@ void ripples(bool reset) {
   hue = wrapAdd(hue, speedStep(1, carryHue), 1536);
 }
 
-// Pattern 14: Diagnostic for the map. Repeats every 20 s:
+// ----- Black & white structure patterns -----
+// High contrast for a baby, all slow at speed level 2.
+
+// Softened square wave: -127..127 sine in, steep but not hard-edged 0..255 out
+byte softSquare(int sine, int steepness) {
+  return constrain(128 + sine * steepness, 0, 255);
+}
+
+// Pattern: White bands drifting down (or up) all strings together; the ring
+// glows as each band arrives
+void coneStripes(bool reset) {
+  static int offset = 0;
+  static int increment = -1;
+  static int bands = 1;  // Bands per string length
+  static int carry = 0;
+
+  if (reset) {
+    offset = random(720);
+    bands = 1 + random(2);
+    increment = random(3) ? -1 : 1;  // Usually down (~12 s per band at 1x)
+  }
+
+  for (int i = 0; i < NUM_LEDS; i++) {
+    if (ledSeg[i] == SEG_NONE) { leds[i] = CRGB::Black; continue; }
+    byte v = softSquare(fixSin(offset + ledDown[i] * bands * 720 / 256), 3);
+    leds[i] = gammaRGB(v, v, v);
+  }
+
+  offset = wrapAdd(offset, speedStep(increment, carry), 720);
+}
+
+// Shared by Pinwheel and B&W Spiral: white and black wedges around the structure,
+// optionally twisting down the strings, slowly turning. Each pattern owns its own
+// WedgeState so they don't disturb each other during a cross-fade.
+struct WedgeState {
+  int angle;    // In 1/16ths of a ledAngle unit
+  int speed;
+  int wedges;   // White wedges around the ring
+  int twist;    // Phase change from A to the ring (720 = one full stripe)
+  int carry;
+};
+
+// Explicit prototype so the Arduino builder doesn't auto-generate one above the struct
+void wedges(WedgeState &state, bool reset, bool twisted);
+
+void wedges(WedgeState &state, bool reset, bool twisted) {
+  if (reset) {
+    state.angle = random(256) * 16;
+    state.speed = random(2) ? 2 : -2;  // ~6 s for white to move one string over at 1x
+    state.wedges = twisted ? 1 + random(2) : 3;  // Pinwheel: every other string white
+    state.twist = twisted ? (random(2) ? 720 : -720) : 0;
+  }
+
+  int a = state.angle / 16;
+  for (int i = 0; i < NUM_LEDS; i++) {
+    if (ledSeg[i] == SEG_NONE) { leds[i] = CRGB::Black; continue; }
+    int phase = (ledAngle[i] - a) * state.wedges * 720 / 256 + ledDown[i] * state.twist / 256;
+    byte v = softSquare(fixSin(phase), 3);
+    leds[i] = gammaRGB(v, v, v);
+  }
+
+  state.angle = wrapAdd(state.angle, speedStep(state.speed, state.carry), 256 * 16);
+}
+
+// Pattern: Every other string white, the white slowly rotating around
+void pinwheel(bool reset) {
+  static WedgeState state;
+  wedges(state, reset, false);
+}
+
+// Pattern: White and black stripes twisting down the strings like a barber pole,
+// slowly turning
+void bwSpiral(bool reset) {
+  static WedgeState state;
+  wedges(state, reset, true);
+}
+
+// Pattern: Strings and ring slowly trade places: strings white while the ring is
+// dark, then the other way round
+void stringsAndRing(bool reset) {
+  static int phase = 0;
+  static int carry = 0;
+  if (reset) phase = 540;  // Start with the strings dim
+
+  // ~12 s per full swap cycle at 1x
+  int s = fixSin(phase);
+  for (int i = 0; i < NUM_LEDS; i++) {
+    if (ledSeg[i] == SEG_NONE) { leds[i] = CRGB::Black; continue; }
+    byte v = softSquare(IS_STRING(ledSeg[i]) ? s : -s, 1);
+    leds[i] = gammaRGB(v, v, v);
+  }
+
+  phase = wrapAdd(phase, speedStep(1, carry), 720);
+}
+
+// Test pattern: Diagnostic for the map. Repeats every 20 s:
 //   0-6 s:  whole structure pure red, then green, then blue (2 s each). Every
 //           LED should match; if some don't, those LEDs use a different color order.
 //   6-20 s: a white dot on every string moving from A down to the ring; the ring
@@ -702,19 +802,29 @@ void mapCheck(bool reset) {
 
 // ===== PATTERN LIST =====
 // To add a pattern: write a function like the ones above, then add it here
-// and give it a name in patternNames[].
+// and give it a name in patternNames[]. Patterns play in a shuffled order.
+
+// Set to 1 to include the map test patterns (Segment Map, Map Check) in the rotation
+#define INCLUDE_TEST_PATTERNS 0
+
 typedef void (*Pattern)(bool reset);
 Pattern gPatterns[] = {
   solidColor, rainbow, sineWaveChase,
   bwStripes, starryNight, whiteComet, breathe, pastelTwinkle,
-  segmentMap, fallingRings, risingRainbow, rainbowSpiral, slowOrbit, ripples,
-  mapCheck
+  fallingRings, risingRainbow, rainbowSpiral, slowOrbit, ripples,
+  coneStripes, pinwheel, bwSpiral, stringsAndRing,
+#if INCLUDE_TEST_PATTERNS
+  segmentMap, mapCheck,
+#endif
 };
 const char* patternNames[] = {
   "Solid", "Rainbow", "Sine Chase",
   "B&W Stripes", "Starry Night", "White Comet", "Breathe", "Pastel Twinkle",
-  "Segment Map", "Falling Rings", "Rising Rainbow", "Rainbow Spiral", "Slow Orbit",
-  "Ripples", "Map Check"
+  "Falling Rings", "Rising Rainbow", "Rainbow Spiral", "Slow Orbit", "Ripples",
+  "Cone Stripes", "Pinwheel", "B&W Spiral", "Strings & Ring",
+#if INCLUDE_TEST_PATTERNS
+  "Segment Map", "Map Check",
+#endif
 };
 
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
@@ -722,6 +832,30 @@ const char* patternNames[] = {
 
 uint8_t currentPattern = 0;
 bool needsReset = true;  // Next render of currentPattern starts fresh
+
+// Auto mode: move to the next pattern every AUTO_PATTERN_MS. A short press of A
+// switches to manual (A steps through patterns); a long press goes back to auto.
+#define AUTO_PATTERN_MS 60000
+#define LONG_PRESS_MS 1000
+bool autoMode = true;
+unsigned long patternStartTime = 0;
+
+// Shuffled play order; reshuffled each time through, never repeating a pattern
+// back to back
+uint8_t playOrder[NUM_PATTERNS];
+uint8_t playPos = 0;
+
+void shufflePlayOrder() {
+  for (int i = 0; i < NUM_PATTERNS; i++) playOrder[i] = i;
+  for (int i = NUM_PATTERNS - 1; i > 0; i--) {
+    int j = random(i + 1);
+    uint8_t t = playOrder[i]; playOrder[i] = playOrder[j]; playOrder[j] = t;
+  }
+  if (NUM_PATTERNS > 1 && playOrder[0] == currentPattern) {
+    uint8_t t = playOrder[0]; playOrder[0] = playOrder[1]; playOrder[1] = t;
+  }
+  playPos = 0;
+}
 
 // Cross-fade state
 bool isFading = false;
@@ -731,7 +865,9 @@ CRGB ledsOld[NUM_LEDS];
 
 void nextPattern() {
   fadeFromPattern = currentPattern;
-  currentPattern = (currentPattern + 1) % NUM_PATTERNS;
+  if (++playPos >= NUM_PATTERNS) shufflePlayOrder();
+  currentPattern = playOrder[playPos];
+  patternStartTime = millis();
   needsReset = true;
   isFading = true;
   fadeStartTime = millis();
@@ -802,6 +938,8 @@ void updateDisplay() {
 
   M5.Display.setTextSize(2);
   M5.Display.drawString("Jasper Lights", 10, 6);
+  M5.Display.setTextColor(autoMode ? GREEN : ORANGE);
+  M5.Display.drawString(autoMode ? "AUTO" : "MAN", autoMode ? 182 : 194, 6);
 
   M5.Display.setTextColor(YELLOW);
   M5.Display.drawString(patternNames[currentPattern], 10, 34);
@@ -819,7 +957,7 @@ void updateDisplay() {
   }
 
   M5.Display.setTextSize(1);
-  M5.Display.drawString("A: pattern  B: bright  PWR: speed", 10, 110);
+  M5.Display.drawString("A:next hold=auto  B:bright  PWR:speed", 10, 110);
   M5.Display.drawString("v" VERSION, 10, 122);
 }
 
@@ -1201,8 +1339,14 @@ void setup() {
   randomSeed(esp_random());
   loadRuns();
 
+  shufflePlayOrder();
+  currentPattern = playOrder[0];
+  patternStartTime = millis();
+  M5.BtnA.setHoldThresh(LONG_PRESS_MS);
+
   updateDisplay();
-  Serial.println("Jasper Lights v" VERSION " ready! A: next pattern, B: brightness, PWR: speed");
+  Serial.println("Jasper Lights v" VERSION " ready! A: next pattern (hold: auto), B: brightness, PWR: speed");
+  Serial.printf("Auto mode, starting with %s\n", patternNames[currentPattern]);
   printHelp();
 }
 
@@ -1215,15 +1359,27 @@ void loop() {
   handleSerial();
 
   M5.update();
-  if (M5.BtnA.wasPressed()) {
+  if (M5.BtnA.wasClicked()) {
     if (tuning) {
       char accept[] = "";
       handleCommand(accept);
     } else if (SHOWING) {
       stopShow();
     } else {
+      if (autoMode) Serial.println("Manual mode");
+      autoMode = false;
       nextPattern();
     }
+    updateDisplay();
+  }
+  if (M5.BtnA.wasHold() && !tuning && !SHOWING && !autoMode) {
+    autoMode = true;
+    patternStartTime = millis();
+    Serial.println("Auto mode");
+    updateDisplay();
+  }
+  if (autoMode && !tuning && !SHOWING && millis() - patternStartTime >= AUTO_PATTERN_MS) {
+    nextPattern();
     updateDisplay();
   }
   if (M5.BtnB.wasPressed()) {

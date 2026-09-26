@@ -4,7 +4,9 @@ LED controller for an M5StickC Plus2 driving a 200-LED WS2811 strand wrapped aro
 
 ## Use
 
-- **A button** (big front button): go to the next pattern. Patterns cross-fade over 1.5 s.
+The lights start in **auto mode**: a new pattern every minute (`AUTO_PATTERN_MS`), in shuffled order. Every pattern plays once before the order is reshuffled, and patterns cross-fade over 1.5 s.
+
+- **A button** (big front button): short press goes to the next pattern and switches to **manual mode**, where the lights stay on the chosen pattern. **Hold 1 s** to go back to auto mode. The screen shows AUTO or MAN.
 - **B button** (right side): cycle through 6 brightness levels (4, 8, 15, 25, 40, 60), then back to the lowest. Starts at level 4 (25).
 - **Power button** (left side, short press): cycle through 6 speed levels: 0.4x, 1x, 2x, 3.5x, 6x, 10x. Starts at level 2 (1x, the speed the patterns were designed at). Every pattern scales its motion by this, except the cross-fade and Map Check. Holding the power button ~6 s still turns the M5 off.
 
@@ -12,27 +14,29 @@ The screen shows the current pattern, and brightness and speed as rows of boxes.
 
 ## Patterns
 
-| # | Name       | Description                                        |
-|---|------------|----------------------------------------------------|
-| 0 | Solid      | Whole strand fades slowly through the rainbow      |
-| 1 | Rainbow    | Rotating rainbow across the strand                 |
-| 2 | Sine Chase | One color in waves with dark gaps, moving along     |
-| 3 | B&W Stripes    | Wide black & white stripes drifting slowly     |
-| 4 | Starry Night   | White stars slowly fading in and out on black  |
-| 5 | White Comet    | 1-3 white comets with soft tails gliding on black |
-| 6 | Breathe        | Whole strand gently breathing a soft pastel color |
-| 7 | Pastel Twinkle | Soft pastel lights slowly fading in and out on black |
-| 8 | Segment Map    | Each string and ring arc in its own fixed color (see below) |
-| 9 | Falling Rings  | A ring of light slowly slides down all six strings at once and lands on the wooden ring (sometimes rises instead) |
-| 10 | Rising Rainbow | Rainbow from A to the ring, drifting slowly up all strings together |
-| 11 | Rainbow Spiral | Rainbow around the ring, twisting up the strings, slowly turning |
-| 12 | Slow Orbit     | One or two soft pastel glows circling the structure, lighting each string as they pass |
-| 13 | Ripples        | Soft pastel waves drifting down the strings; the ring glows as each arrives |
-| 14 | Map Check      | Diagnostic, repeats every 20 s: whole structure red, green, blue (2 s each), then white dots moving from A down all strings together |
+| Name           | Description                                        |
+|----------------|----------------------------------------------------|
+| Solid          | Whole strand fades slowly through the rainbow      |
+| Rainbow        | Rotating rainbow across the strand                 |
+| Sine Chase     | One color in waves with dark gaps, moving along    |
+| B&W Stripes    | Wide black & white stripes drifting slowly         |
+| Starry Night   | White stars slowly fading in and out on black      |
+| White Comet    | 1-3 white comets with soft tails gliding on black  |
+| Breathe        | Whole strand gently breathing a soft pastel color  |
+| Pastel Twinkle | Soft pastel lights slowly fading in and out on black |
+| Falling Rings  | A ring of light slowly slides down all six strings at once and lands on the wooden ring (sometimes rises instead) |
+| Rising Rainbow | Rainbow from A to the ring, drifting slowly up all strings together |
+| Rainbow Spiral | Rainbow around the ring, twisting up the strings, slowly turning |
+| Slow Orbit     | One or two soft pastel glows circling the structure, lighting each string as they pass |
+| Ripples        | Soft pastel waves drifting down the strings; the ring glows as each arrives |
+| Cone Stripes   | Black & white: soft white bands drifting down (sometimes up) all strings; the ring glows as each arrives |
+| Pinwheel       | Black & white: every other string white, the white slowly rotating around |
+| B&W Spiral     | Black & white: stripes twisting down the strings like a barber pole, slowly turning |
+| Strings & Ring | Black & white: strings and ring slowly trade places, one white while the other is dark |
 
-Patterns 8-13 use the structure map and are all slow and gentle; the others treat the strand as one long line.
+The patterns from Falling Rings on use the structure map; the others treat the strand as one long line. The black & white ones (B&W Stripes, Starry Night, White Comet and the last four) are high contrast, which newborns see best.
 
-Patterns 3-7 are meant for a baby: slow, and mostly high-contrast black & white, which newborns see best.
+Test patterns for checking the map (**Segment Map**: each segment in a fixed color; **Map Check**: red/green/blue then white dots moving down all strings) are left out of the rotation. Set `INCLUDE_TEST_PATTERNS` to 1 at the pattern list to include them.
 
 Each time a pattern is selected it picks new random speed, direction and spacing.
 
