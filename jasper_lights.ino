@@ -1,6 +1,6 @@
 /// @file    jasper_lights.ino
 /// @brief   Simple M5StickC Plus2 LED blinker for Jasper
-/// @version 1.3.1
+/// @version 1.4.0
 /// @date    2026-09-26
 /// @author  John Cohn (patterns adapted from m5lights_v1 / Larry's patterns)
 ///
@@ -8,6 +8,8 @@
 /// B button (side button): cycle through 6 brightness levels
 ///
 /// @changelog
+/// v1.4.0 - Smoother White Comet, Falling Rings and Map Check (sub-LED positions,
+///          soft leading edge); slower twinkles; serial 'pixel N' alignment check
 /// v1.3.1 - Fixed strand path after the jumper (6 -> 5 -> A -> 6, not 6 -> A -> 5 -> 6);
 ///          Map Check pattern and serial show/run segment viewer
 /// v1.3.0 - Rising Rainbow, Rainbow Spiral, Slow Orbit and Ripples patterns;
@@ -24,7 +26,7 @@
 #include <FastLED.h>
 #include <Preferences.h>
 
-#define VERSION "1.3.1"
+#define VERSION "1.4.0"
 
 // Hardware config
 #define LED_PIN 32
@@ -180,6 +182,8 @@ int tuneRun = 0;
 // Serial "show" state (see SEGMENT VIEWER below): -1 = not showing
 int showSeg = -1;  // Show every run covering this segment
 int showRun = -1;  // Or show just this run
+int showPixel = -1;  // Or show this pixel (0 = top) on every string
+#define SHOWING (showSeg >= 0 || showRun >= 0 || showPixel >= 0)
 
 // Segments, independent of how many times the strand covers them:
 //   0-5  = strings A-1..A-6
@@ -350,12 +354,12 @@ void twinkle(TwinkleState &state, bool reset, bool pastel) {
 
   for (int i = 0; i < NUM_LEDS; i++) {
     if (phase[i] == 0) {
-      if (random(1000) < 4) {  // Chance per frame of a new twinkle starting here
+      if (random(1000) < 2) {  // Chance per frame of a new twinkle starting here
         phase[i] = 1;
         hue[i] = random(1536);
       }
     } else {
-      phase[i] = (phase[i] > 253) ? 0 : phase[i] + 2;  // ~2 seconds per twinkle
+      phase[i] = (phase[i] == 255) ? 0 : phase[i] + 1;  // ~4 seconds per twinkle
     }
 
     byte v = (phase[i] < 128) ? phase[i] * 2 : (255 - phase[i]) * 2;
@@ -390,19 +394,20 @@ void whiteComet(bool reset) {
     position = 0;
   }
 
-  int spacing = NUM_LEDS / numComets;
-  int head = (int)(position / 16);
+  // Everything in 1/16ths of an LED, so the comet moves smoothly between LEDs
+  long spacing16 = (long)(NUM_LEDS / numComets) * 16;
+  long tail16 = (long)tailLength * 16;
   for (int i = 0; i < NUM_LEDS; i++) {
     // Distance behind the nearest comet head (in the direction of travel)
-    int d = (speed > 0) ? head - i : i - head;
-    d %= spacing;
-    if (d < 0) d += spacing;
+    long d = (speed > 0) ? position - i * 16L : i * 16L - position;
+    d %= spacing16;
+    if (d < 0) d += spacing16;
+    if (d > spacing16 - 16) d -= spacing16;  // Within one LED ahead of a head
 
-    byte v = 0;
-    if (d < tailLength) {
-      int t = 255 * (tailLength - d) / tailLength;
-      v = t * t / 255;  // Squared falloff for a smooth tail
-    }
+    long t = 0;
+    if (d < 0) t = 255 * (16 + d) / 16;                      // Fading in just ahead
+    else if (d < tail16) t = 255 * (tail16 - d) / tail16;    // Tail
+    byte v = t * t / 255;  // Squared falloff for a smooth tail
     leds[i] = gammaRGB(v, v, v);
   }
 
@@ -474,9 +479,10 @@ void fallingRings(bool reset) {
   static int hue = 0;
   static bool rising = false;
   const int tail = 90;     // Length of the glow behind the leading edge
+  const int lead = 24;     // Soft fade-in ahead of the leading edge (~1.3 LEDs)
 
   if (reset) {
-    pos = 0;
+    pos = -lead * 16;
     speed = 6 + random(6);  // ~7-11 s from A to the ring
     hue = random(1536);
     rising = random(3) == 0;
@@ -485,12 +491,11 @@ void fallingRings(bool reset) {
   for (int i = 0; i < NUM_LEDS; i++) {
     if (ledSeg[i] == SEG_NONE) { leds[i] = CRGB::Black; continue; }
     int down = rising ? 255 - ledDown[i] : ledDown[i];
-    int d = pos / 16 - down;  // How far the leading edge is past this LED
-    byte v = 0;
-    if (d >= 0 && d < tail) {
-      int t = 255 * (tail - d) / tail;
-      v = t * t / 255;
-    }
+    long d = pos - down * 16L;  // How far the leading edge is past this LED, in 1/16ths
+    long t = 0;
+    if (d < 0 && d > -lead * 16) t = 255 * (lead * 16L + d) / (lead * 16);  // Fading in
+    else if (d >= 0 && d < tail * 16L) t = 255 * (tail * 16L - d) / (tail * 16);
+    byte v = t * t / 255;
     byte r, g, b;
     hsvToRgb(hue, 220, v, &r, &g, &b);
     leds[i] = gammaRGB(r, g, b);
@@ -498,7 +503,7 @@ void fallingRings(bool reset) {
 
   pos += speed;
   if (pos / 16 > 255 + tail + 20) {  // Fully faded, plus a short dark pause
-    pos = 0;
+    pos = -lead * 16;
     hue = (hue + 256 + random(512)) % 1536;
   }
 }
@@ -629,13 +634,20 @@ void mapCheck(bool reset) {
     return;
   }
 
-  int dot = (t - 6000) * 280 / 14000;  // 0..279, past 255 so the ring stays lit a moment
+  // In 1/16ths of ledDown units: 0..279, past 255 so the ring stays lit a moment
+  long dot = (long)(t - 6000) * 280 * 16 / 14000;
+  const long width = 20 * 16;
   for (int i = 0; i < NUM_LEDS; i++) {
-    bool on = false;
+    long v = 0;
     if (ledSeg[i] != SEG_NONE) {
-      on = IS_STRING(ledSeg[i]) ? abs(ledDown[i] - dot) < 12 : dot >= 245;
+      if (IS_STRING(ledSeg[i])) {
+        long dist = abs(ledDown[i] * 16L - dot);
+        if (dist < width) v = 255 * (width - dist) / width;
+      } else {
+        v = constrain((dot - 230 * 16L) * 255 / (25 * 16), 0, 255);  // Fades in as dots arrive
+      }
     }
-    leds[i] = on ? CRGB::White : CRGB::Black;
+    leds[i] = gammaRGB(v, v, v);
   }
 }
 
@@ -704,17 +716,18 @@ void renderPattern() {
 // ===== DISPLAY =====
 // Screen is 240x135 in landscape
 void updateDisplay() {
-  if (!tuning && (showSeg >= 0 || showRun >= 0)) {
+  if (!tuning && SHOWING) {
     M5.Display.fillScreen(DARKGREEN);
     M5.Display.setTextColor(WHITE);
     M5.Display.setTextSize(2);
     M5.Display.drawString("SHOWING", 10, 6);
     M5.Display.setTextColor(YELLOW);
     if (showSeg >= 0) M5.Display.drawString(String("Segment ") + segmentNames[showSeg], 10, 34);
-    else M5.Display.drawString("Run " + String(showRun + 1), 10, 34);
+    else if (showRun >= 0) M5.Display.drawString("Run " + String(showRun + 1), 10, 34);
+    else M5.Display.drawString("Pixel " + String(showPixel) + " from top", 10, 34);
     M5.Display.setTextColor(WHITE);
     M5.Display.setTextSize(1);
-    M5.Display.drawString("Green = start, red = end", 10, 70);
+    if (showPixel < 0) M5.Display.drawString("Green = start, red = end", 10, 70);
     M5.Display.drawString("A: back to patterns", 10, 110);
     return;
   }
@@ -845,7 +858,7 @@ void printTuneRun() {
 }
 
 void startTuning() {
-  showSeg = showRun = -1;
+  showSeg = showRun = showPixel = -1;
   tuning = true;
   tuneRun = 0;
   isFading = false;
@@ -935,6 +948,7 @@ void printShownRun(int r) {
 void startShow(int seg, int run) {
   showSeg = seg;
   showRun = run;
+  showPixel = -1;
   isFading = false;
   if (seg >= 0) {
     Serial.printf("\nShowing segment %s (%s). Green = %s, red = %s\n", segmentNames[seg],
@@ -950,12 +964,47 @@ void startShow(int seg, int run) {
 }
 
 void stopShow() {
-  showSeg = showRun = -1;
+  showSeg = showRun = showPixel = -1;
   needsReset = true;
+}
+
+// LED index of pixel p (0 = top) on string run r, or -1 if the run is too short
+int stringPixel(int r, int p) {
+  if (p > runs[r].end - runs[r].start) return -1;
+  return (runs[r].to == NODE_A) ? runs[r].end - p : runs[r].start + p;
+}
+
+bool isStringRun(int r) {
+  return runs[r].from == NODE_A || runs[r].to == NODE_A;
+}
+
+void startPixel(int p) {
+  showSeg = showRun = -1;
+  showPixel = p;
+  isFading = false;
+  Serial.printf("\nPixel %d from the top on every string (+ / - to step):\n", p);
+  for (int r = 0; r < NUM_RUNS; r++) {
+    if (!isStringRun(r)) continue;
+    int string = (runs[r].from == NODE_A ? runs[r].to : runs[r].from);
+    int led = stringPixel(r, p);
+    if (led < 0) {
+      Serial.printf("  A-%d (run %d): only %d LEDs, not lit\n", string, r + 1,
+                    runs[r].end - runs[r].start + 1);
+    } else {
+      Serial.printf("  A-%d (run %d): LED %d\n", string, r + 1, led);
+    }
+  }
 }
 
 void renderShow() {
   fill_solid(leds, NUM_LEDS, CRGB::Black);
+  if (showPixel >= 0) {
+    for (int r = 0; r < NUM_RUNS; r++) {
+      int led = isStringRun(r) ? stringPixel(r, showPixel) : -1;
+      if (led >= 0) leds[led] = CRGB::White;
+    }
+    return;
+  }
   for (int r = 0; r < NUM_RUNS; r++) {
     if (!runIsShown(r)) continue;
     bool flip;
@@ -970,6 +1019,7 @@ void printHelp() {
   Serial.println("Commands: tune = tune the LED map, map = print the map,");
   Serial.println("          reset = forget tuned map and use the defaults in the code");
   Serial.println("          show A-5 / show 1-2 = light a segment, run N = light run N (1-18),");
+  Serial.println("          pixel N = light pixel N (0 = top) on every string, then + / - to step,");
   Serial.println("          off = back to patterns");
 }
 
@@ -986,6 +1036,13 @@ void handleCommand(char *cmd) {
       uint8_t seg = parseSegment(cmd + 5);
       if (seg == SEG_NONE) Serial.println("  ?? Segment should be like A-5 or 1-2");
       else startShow(seg, -1);
+    } else if (sscanf(cmd, "pixel %d", &a) == 1) {
+      if (a < 0) Serial.println("  ?? Pixel should be 0 or more");
+      else startPixel(a);
+    } else if (showPixel >= 0 && strcmp(cmd, "+") == 0) {
+      startPixel(showPixel + 1);
+    } else if (showPixel >= 0 && strcmp(cmd, "-") == 0) {
+      startPixel(max(showPixel - 1, 0));
     } else if (sscanf(cmd, "run %d", &a) == 1) {
       if (a < 1 || a > (int)NUM_RUNS) Serial.printf("  ?? Run should be 1-%d\n", NUM_RUNS);
       else startShow(-1, a - 1);
@@ -1078,7 +1135,7 @@ void loop() {
     if (tuning) {
       char accept[] = "";
       handleCommand(accept);
-    } else if (showSeg >= 0 || showRun >= 0) {
+    } else if (SHOWING) {
       stopShow();
     } else {
       nextPattern();
@@ -1091,7 +1148,7 @@ void loop() {
   }
 
   if (tuning) renderTune();
-  else if (showSeg >= 0 || showRun >= 0) renderShow();
+  else if (SHOWING) renderShow();
   else renderPattern();
   FastLED.show();
 }

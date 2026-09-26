@@ -15,10 +15,10 @@ LED controller for an M5StickC Plus2 driving a 200-LED WS2811 strand wrapped aro
 | 1 | Rainbow    | Rotating rainbow across the strand                 |
 | 2 | Sine Chase | One color in waves with dark gaps, moving along     |
 | 3 | B&W Stripes    | Wide black & white stripes drifting slowly     |
-| 4 | Starry Night   | White stars fading in and out on black         |
+| 4 | Starry Night   | White stars slowly fading in and out on black  |
 | 5 | White Comet    | 1-3 white comets with soft tails gliding on black |
 | 6 | Breathe        | Whole strand gently breathing a soft pastel color |
-| 7 | Pastel Twinkle | Soft pastel lights fading in and out on black  |
+| 7 | Pastel Twinkle | Soft pastel lights slowly fading in and out on black |
 | 8 | Segment Map    | Each string and ring arc in its own fixed color (see below) |
 | 9 | Falling Rings  | A ring of light slowly slides down all six strings at once and lands on the wooden ring (sometimes rises instead) |
 | 10 | Rising Rainbow | Rainbow from A to the ring, drifting slowly up all strings together |
@@ -32,6 +32,8 @@ Patterns 8-13 use the structure map and are all slow and gentle; the others trea
 Patterns 3-7 are meant for a baby: slow, and mostly high-contrast black & white, which newborns see best.
 
 Each time a pattern is selected it picks new random speed, direction and spacing.
+
+Moving patterns (White Comet, Falling Rings, Map Check) track positions in 1/16ths of an LED and fade each LED in just ahead of the moving edge, so motion glides between LEDs instead of stepping. At low brightness levels each LED has only a few distinct brightness steps, so the dimmest parts of fades can still look a little steppy.
 
 ## Structure map
 
@@ -67,6 +69,7 @@ Serial commands outside tuning: `tune`, `map` (print the current map as C code),
 
 - `show A-5` / `show 1-2`: lights every run covering that segment in white, with **green at the segment's start** and **red at its end** as the map understands them. Strings start at the top (A); ring arcs start at the lower-numbered point (6-1 starts at 6). A run with green at the wrong end is mapped backwards. The serial monitor lists each lit run and its LEDs.
 - `run N`: lights just run N (1-18), the same way.
+- `pixel N`: lights the Nth LED from the top (0 = top) on every string, including both A-5 strips, to check they line up. `+` / `-` step down / up. Strings with fewer than N+1 LEDs are listed as not lit.
 - `off` or the A button: back to the patterns.
 
 If you've lost track of which point is which, `show A-1`, `show A-2`, … find the points and which way the numbers go around the ring.
