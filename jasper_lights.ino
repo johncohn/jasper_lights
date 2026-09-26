@@ -1,6 +1,6 @@
 /// @file    jasper_lights.ino
 /// @brief   Simple M5StickC Plus2 LED blinker for Jasper
-/// @version 1.3.0
+/// @version 1.3.1
 /// @date    2026-09-26
 /// @author  John Cohn (patterns adapted from m5lights_v1 / Larry's patterns)
 ///
@@ -8,6 +8,8 @@
 /// B button (side button): cycle through 6 brightness levels
 ///
 /// @changelog
+/// v1.3.1 - Fixed strand path after the jumper (6 -> 5 -> A -> 6, not 6 -> A -> 5 -> 6);
+///          Map Check pattern and serial show/run segment viewer
 /// v1.3.0 - Rising Rainbow, Rainbow Spiral, Slow Orbit and Ripples patterns;
 ///          slower, softer Falling Rings
 /// v1.2.1 - Tuned LED map built into the code
@@ -22,7 +24,7 @@
 #include <FastLED.h>
 #include <Preferences.h>
 
-#define VERSION "1.3.0"
+#define VERSION "1.3.1"
 
 // Hardware config
 #define LED_PIN 32
@@ -158,9 +160,9 @@ const Run defaultRuns[] = {
   {NODE_A, 2, 100, 115},
   {2, 1,      116, 125},
   {1, 6,      126, 133},
-  {6, NODE_A, 134, 142},
-  {NODE_A, 5, 143, 156},
-  {5, 6,      157, 167},
+  {6, 5,      134, 142},
+  {5, NODE_A, 143, 156},
+  {NODE_A, 6, 157, 167},
   {6, 1,      168, 177},
   {1, 2,      178, 189},
   {2, 3,      190, 196},
