@@ -1,6 +1,6 @@
 /// @file    jasper_lights.ino
 /// @brief   Simple M5StickC Plus2 LED blinker for Jasper
-/// @version 1.1.1
+/// @version 1.2.0
 /// @date    2026-09-26
 /// @author  John Cohn (patterns adapted from m5lights_v1 / Larry's patterns)
 ///
@@ -8,6 +8,8 @@
 /// B button (side button): cycle through 6 brightness levels
 ///
 /// @changelog
+/// v1.2.0 - Structure map of the hanging ring (strings A-1..A-6, arcs 1-2..6-1),
+///          serial tuner for the map, Segment Map and Falling Rings patterns
 /// v1.1.1 - Starry Night and Pastel Twinkle keep separate twinkle state
 /// v1.1.0 - Added baby-friendly patterns (B&W Stripes, Starry Night, White Comet,
 ///          Breathe, Pastel Twinkle), B button brightness, removed Wavy Flag
@@ -15,8 +17,9 @@
 
 #include <M5StickCPlus2.h>
 #include <FastLED.h>
+#include <Preferences.h>
 
-#define VERSION "1.1.1"
+#define VERSION "1.2.0"
 
 // Hardware config
 #define LED_PIN 32
@@ -117,6 +120,106 @@ void hsvToRgb(int h, byte s, byte v, byte *r, byte *g, byte *b) {
     case 3: *r = p; *g = q; *b = v; break;
     case 4: *r = t; *g = p; *b = v; break;
     default: *r = v; *g = p; *b = q; break;
+  }
+}
+
+// ===== STRUCTURE MAP =====
+// The strand is hung on a hanging cone: a small ring 'A' at the top, six strings
+// A-1..A-6 going down to six equally spaced points 1..6 on a wooden ring
+// (~9.5" across, strings ~7"). The single strand snakes through it, covering some
+// segments two or three times. Each "run" below is one pass of the strand along one
+// segment, in strand order. LEDs 0-99 and 100-199 are joined by a jumper at A.
+//
+// Defaults were estimated from the dimensions (~0.52" per LED); fine-tune them with
+// the serial tuner (type "tune" in the serial monitor). Tuned values are saved in
+// flash and override these; "reset" goes back to these.
+
+#define NODE_A 0  // Points on the ring are 1..6
+
+struct Run {
+  uint8_t from, to;    // Node the strand starts this run at, and ends at
+  int16_t start, end;  // First and last LED index (inclusive)
+};
+
+const Run defaultRuns[] = {
+  {NODE_A, 5,   0,  12},
+  {5, 4,       13,  22},
+  {4, 3,       23,  31},
+  {3, NODE_A,  32,  44},
+  {NODE_A, 4,  45,  58},
+  {4, 3,       59,  67},
+  {3, 2,       68,  76},
+  {2, 1,       77,  86},
+  {1, NODE_A,  87,  99},
+  // Jumper at A
+  {NODE_A, 2, 100, 113},
+  {2, 1,      114, 123},
+  {1, 6,      124, 132},
+  {6, NODE_A, 133, 146},
+  {NODE_A, 5, 147, 160},
+  {5, 6,      161, 170},
+  {6, 1,      171, 179},
+  {1, 2,      180, 189},
+  {2, 3,      190, 199},
+};
+#define NUM_RUNS (sizeof(defaultRuns) / sizeof(defaultRuns[0]))
+Run runs[NUM_RUNS];
+const char* nodeNames[] = { "A", "1", "2", "3", "4", "5", "6" };
+
+// Serial tuner state (see SERIAL TUNER below)
+bool tuning = false;
+int tuneRun = 0;
+
+// Segments, independent of how many times the strand covers them:
+//   0-5  = strings A-1..A-6
+//   6-11 = ring arcs 1-2, 2-3, 3-4, 4-5, 5-6, 6-1
+#define NUM_SEGMENTS 12
+#define SEG_NONE 255
+#define IS_STRING(seg) ((seg) < 6)
+
+// Per-LED map, rebuilt by buildMap() whenever runs[] changes.
+uint8_t ledSeg[NUM_LEDS];    // Segment, or SEG_NONE if no run covers this LED
+uint8_t ledPos[NUM_LEDS];    // 0-255 along the segment: strings from A down,
+                             // arcs from the lower point (6-1 from 6 to 1)
+uint8_t ledDown[NUM_LEDS];   // 0 at A .. 255 at the wooden ring
+uint8_t ledAngle[NUM_LEDS];  // 0-255 around the ring, point 1 = 0, increasing toward 2
+
+// Segment for a run between two nodes; 'flip' is true when the strand runs against
+// the segment's direction.
+uint8_t segmentFor(uint8_t from, uint8_t to, bool &flip) {
+  flip = false;
+  if (from == NODE_A) return to - 1;
+  if (to == NODE_A) { flip = true; return from - 1; }
+  if (to == from % 6 + 1) return 6 + from - 1;
+  flip = true;
+  return 6 + to - 1;
+}
+
+void buildMap() {
+  memset(ledSeg, SEG_NONE, sizeof(ledSeg));
+  memset(ledPos, 0, sizeof(ledPos));
+  memset(ledDown, 0, sizeof(ledDown));
+  memset(ledAngle, 0, sizeof(ledAngle));
+
+  for (int r = 0; r < NUM_RUNS; r++) {
+    bool flip;
+    uint8_t seg = segmentFor(runs[r].from, runs[r].to, flip);
+    int n = runs[r].end - runs[r].start + 1;
+    for (int i = 0; i < n; i++) {
+      int led = runs[r].start + i;
+      if (led < 0 || led >= NUM_LEDS) continue;
+      uint8_t pos = (2 * i + 1) * 256 / (2 * n);  // Center of each LED's share
+      if (flip) pos = 255 - pos;
+      ledSeg[led] = seg;
+      ledPos[led] = pos;
+      if (IS_STRING(seg)) {
+        ledDown[led] = pos;
+        ledAngle[led] = seg * 256 / 6;
+      } else {
+        ledDown[led] = 255;
+        ledAngle[led] = (seg - 6) * 256 / 6 + pos / 6;
+      }
+    }
   }
 }
 
@@ -323,17 +426,85 @@ void pastelTwinkle(bool reset) {
   twinkle(state, reset, true);
 }
 
+// ----- Structure patterns -----
+// These use the structure map above.
+
+// Fixed color for each segment, used by Segment Map and the tuner.
+// Strings A-1..A-6 get red, yellow, green, cyan, blue, magenta; each ring arc gets
+// the color halfway between its two strings (1-2 orange, 2-3 lime, ... 6-1 pink).
+const char* segmentNames[NUM_SEGMENTS] = {
+  "A-1", "A-2", "A-3", "A-4", "A-5", "A-6", "1-2", "2-3", "3-4", "4-5", "5-6", "6-1"
+};
+const char* segmentColorNames[NUM_SEGMENTS] = {
+  "red", "yellow", "green", "cyan", "blue", "magenta",
+  "orange", "lime", "sea green", "azure", "violet", "pink"
+};
+
+CRGB segmentColor(uint8_t seg, byte v) {
+  int hue = IS_STRING(seg) ? seg * 256 : (seg - 6) * 256 + 128;
+  byte r, g, b;
+  hsvToRgb(hue, 255, v, &r, &g, &b);
+  return gammaRGB(r, g, b);
+}
+
+// Pattern 8: Each string and ring arc in its own fixed color (see segmentColor()).
+// Useful for checking the map: every copy of a doubled segment should match.
+void segmentMap(bool reset) {
+  for (int i = 0; i < NUM_LEDS; i++) {
+    leds[i] = (ledSeg[i] == SEG_NONE) ? CRGB::Black : segmentColor(ledSeg[i], 255);
+  }
+}
+
+// Pattern 9: A ring of light slides down all six strings at once, lands on the
+// wooden ring and fades out. Sometimes it rises from the ring up to A instead.
+void fallingRings(bool reset) {
+  static int pos = 0;      // Leading edge, in 1/16ths of ledDown units
+  static int speed = 24;
+  static int hue = 0;
+  static bool rising = false;
+  const int tail = 70;     // Length of the glow behind the leading edge
+
+  if (reset) {
+    pos = 0;
+    speed = 16 + random(20);
+    hue = random(1536);
+    rising = random(3) == 0;
+  }
+
+  for (int i = 0; i < NUM_LEDS; i++) {
+    if (ledSeg[i] == SEG_NONE) { leds[i] = CRGB::Black; continue; }
+    int down = rising ? 255 - ledDown[i] : ledDown[i];
+    int d = pos / 16 - down;  // How far the leading edge is past this LED
+    byte v = 0;
+    if (d >= 0 && d < tail) {
+      int t = 255 * (tail - d) / tail;
+      v = t * t / 255;
+    }
+    byte r, g, b;
+    hsvToRgb(hue, 220, v, &r, &g, &b);
+    leds[i] = gammaRGB(r, g, b);
+  }
+
+  pos += speed;
+  if (pos / 16 > 255 + tail + 20) {  // Fully faded, plus a short dark pause
+    pos = 0;
+    hue = (hue + 256 + random(512)) % 1536;
+  }
+}
+
 // ===== PATTERN LIST =====
 // To add a pattern: write a function like the ones above, then add it here
 // and give it a name in patternNames[].
 typedef void (*Pattern)(bool reset);
 Pattern gPatterns[] = {
   solidColor, rainbow, sineWaveChase,
-  bwStripes, starryNight, whiteComet, breathe, pastelTwinkle
+  bwStripes, starryNight, whiteComet, breathe, pastelTwinkle,
+  segmentMap, fallingRings
 };
 const char* patternNames[] = {
   "Solid", "Rainbow", "Sine Chase",
-  "B&W Stripes", "Starry Night", "White Comet", "Breathe", "Pastel Twinkle"
+  "B&W Stripes", "Starry Night", "White Comet", "Breathe", "Pastel Twinkle",
+  "Segment Map", "Falling Rings"
 };
 
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
@@ -384,6 +555,23 @@ void renderPattern() {
 // ===== DISPLAY =====
 // Screen is 240x135 in landscape
 void updateDisplay() {
+  if (tuning) {
+    bool flip;
+    uint8_t seg = segmentFor(runs[tuneRun].from, runs[tuneRun].to, flip);
+    M5.Display.fillScreen(MAROON);
+    M5.Display.setTextColor(WHITE);
+    M5.Display.setTextSize(2);
+    M5.Display.drawString("TUNING " + String(tuneRun + 1) + "/" + String(NUM_RUNS), 10, 6);
+    M5.Display.setTextColor(YELLOW);
+    M5.Display.drawString(String(nodeNames[runs[tuneRun].from]) + " -> " + nodeNames[runs[tuneRun].to] +
+                          "  (" + segmentNames[seg] + ")", 10, 34);
+    M5.Display.setTextColor(WHITE);
+    M5.Display.drawString("LEDs " + String(runs[tuneRun].start) + " - " + String(runs[tuneRun].end), 10, 62);
+    M5.Display.setTextSize(1);
+    M5.Display.drawString("Use serial monitor. A: accept", 10, 110);
+    return;
+  }
+
   M5.Display.fillScreen(NAVY);
   M5.Display.setTextColor(WHITE);
 
@@ -414,6 +602,197 @@ void nextBrightness() {
                 brightnessLevels[brightnessIndex]);
 }
 
+// ===== MAP STORAGE =====
+// Only the start/end of each run are saved, so a change to the strand path in
+// defaultRuns[] (different number of runs) makes old saved values be ignored.
+Preferences prefs;
+
+void loadRuns() {
+  memcpy(runs, defaultRuns, sizeof(runs));
+  int16_t saved[NUM_RUNS * 2];
+  prefs.begin("jlmap", true);
+  if (prefs.getBytesLength("runs") == sizeof(saved)) {
+    prefs.getBytes("runs", saved, sizeof(saved));
+    for (int r = 0; r < NUM_RUNS; r++) {
+      runs[r].start = saved[r * 2];
+      runs[r].end = saved[r * 2 + 1];
+    }
+    Serial.println("Loaded tuned map from flash");
+  }
+  prefs.end();
+  buildMap();
+}
+
+void saveRuns() {
+  int16_t saved[NUM_RUNS * 2];
+  for (int r = 0; r < NUM_RUNS; r++) {
+    saved[r * 2] = runs[r].start;
+    saved[r * 2 + 1] = runs[r].end;
+  }
+  prefs.begin("jlmap", false);
+  prefs.putBytes("runs", saved, sizeof(saved));
+  prefs.end();
+  Serial.println("Map saved to flash");
+}
+
+void resetRuns() {
+  prefs.begin("jlmap", false);
+  prefs.clear();
+  prefs.end();
+  memcpy(runs, defaultRuns, sizeof(runs));
+  buildMap();
+  Serial.println("Map reset to defaults");
+}
+
+// Prints the map as C code, ready to paste over defaultRuns[]
+void printRuns() {
+  Serial.println("\nconst Run defaultRuns[] = {");
+  for (int r = 0; r < NUM_RUNS; r++) {
+    if (r > 0 && runs[r].from == NODE_A && runs[r - 1].to == NODE_A &&
+        runs[r].start != runs[r - 1].end + 1) {
+      Serial.println("  // Gap");
+    }
+    Serial.printf("  {%s, %s, %3d, %3d},  // %s -> %s, %d LEDs\n",
+                  runs[r].from == NODE_A ? "NODE_A" : nodeNames[runs[r].from],
+                  runs[r].to == NODE_A ? "NODE_A" : nodeNames[runs[r].to],
+                  runs[r].start, runs[r].end,
+                  nodeNames[runs[r].from], nodeNames[runs[r].to],
+                  runs[r].end - runs[r].start + 1);
+  }
+  Serial.println("};");
+}
+
+// ===== SERIAL TUNER =====
+// Type "tune" in the serial monitor (115200 baud, line ending on). Steps through each
+// run in strand order: the run being tuned is white with its first LED green and
+// last LED red; everything else shows dimly in its Segment Map color. Changing a
+// run's end also moves the next run's start (and vice versa) if they were touching.
+void printTuneRun() {
+  bool flip;
+  uint8_t seg = segmentFor(runs[tuneRun].from, runs[tuneRun].to, flip);
+  Serial.printf("\nRun %d/%d: %s -> %s   (segment %s, %s in Segment Map)\n",
+                tuneRun + 1, NUM_RUNS, nodeNames[runs[tuneRun].from], nodeNames[runs[tuneRun].to],
+                segmentNames[seg], segmentColorNames[seg]);
+  Serial.printf("  start %d, end %d (%d LEDs)\n", runs[tuneRun].start, runs[tuneRun].end,
+                runs[tuneRun].end - runs[tuneRun].start + 1);
+  Serial.printf("  Green should be the first LED after %s, red the last LED before %s.\n",
+                nodeNames[runs[tuneRun].from], nodeNames[runs[tuneRun].to]);
+  Serial.println("  Enter/y = accept, s N = set start, e N = set end, N M = set both,");
+  Serial.println("  b = back, q = finish");
+}
+
+void startTuning() {
+  tuning = true;
+  tuneRun = 0;
+  isFading = false;
+  printTuneRun();
+}
+
+void finishTuning() {
+  tuning = false;
+  needsReset = true;
+  saveRuns();
+  printRuns();
+  Serial.println("Tuning done. Paste the table above over defaultRuns[] to make it permanent.");
+}
+
+// Returns false (and changes nothing) if the new value would make a run invalid
+bool setRunStart(int r, int v) {
+  int prev = r - 1;
+  bool linked = prev >= 0 && runs[prev].end == runs[r].start - 1;
+  if (v < 0 || v > runs[r].end) return false;
+  if (linked && v - 1 < runs[prev].start) return false;
+  runs[r].start = v;
+  if (linked) runs[prev].end = v - 1;
+  return true;
+}
+
+bool setRunEnd(int r, int v) {
+  int next = r + 1;
+  bool linked = next < NUM_RUNS && runs[next].start == runs[r].end + 1;
+  if (v >= NUM_LEDS || v < runs[r].start) return false;
+  if (linked && v + 1 > runs[next].end) return false;
+  runs[r].end = v;
+  if (linked) runs[next].start = v + 1;
+  return true;
+}
+
+void renderTune() {
+  for (int i = 0; i < NUM_LEDS; i++) {
+    leds[i] = (ledSeg[i] == SEG_NONE) ? CRGB::Black : segmentColor(ledSeg[i], 130);
+  }
+  for (int i = runs[tuneRun].start; i <= runs[tuneRun].end; i++) leds[i] = CRGB::White;
+  leds[runs[tuneRun].start] = CRGB::Green;
+  leds[runs[tuneRun].end] = CRGB::Red;
+}
+
+void printHelp() {
+  Serial.println("Commands: tune = tune the LED map, map = print the map,");
+  Serial.println("          reset = forget tuned map and use the defaults in the code");
+}
+
+void handleCommand(char *cmd) {
+  while (*cmd == ' ') cmd++;
+  int a, b;
+
+  if (!tuning) {
+    if (strcasecmp(cmd, "tune") == 0) startTuning();
+    else if (strcasecmp(cmd, "map") == 0) printRuns();
+    else if (strcasecmp(cmd, "reset") == 0) resetRuns();
+    else if (*cmd) printHelp();
+    updateDisplay();
+    return;
+  }
+
+  bool ok = true;
+  if (*cmd == 0 || strcasecmp(cmd, "y") == 0) {
+    if (++tuneRun >= NUM_RUNS) { finishTuning(); updateDisplay(); return; }
+  } else if (strcasecmp(cmd, "b") == 0) {
+    if (tuneRun > 0) tuneRun--;
+  } else if (strcasecmp(cmd, "q") == 0) {
+    finishTuning();
+    updateDisplay();
+    return;
+  } else if (sscanf(cmd, "s %d", &a) == 1) {
+    ok = setRunStart(tuneRun, a);
+  } else if (sscanf(cmd, "e %d", &a) == 1) {
+    ok = setRunEnd(tuneRun, a);
+  } else if (sscanf(cmd, "%d %d", &a, &b) == 2) {
+    // Set the end first when moving the run later, so start never passes end
+    if (a > runs[tuneRun].end) ok = setRunEnd(tuneRun, b) && setRunStart(tuneRun, a);
+    else ok = setRunStart(tuneRun, a) && setRunEnd(tuneRun, b);
+  } else {
+    ok = false;
+  }
+
+  if (!ok) Serial.println("  ?? Not valid here (out of range, or would overlap a neighbor)");
+  buildMap();
+  printTuneRun();
+  updateDisplay();
+}
+
+// Reads a line at a time; accepts \n, \r or \r\n line endings
+void handleSerial() {
+  static char line[40];
+  static int len = 0;
+  static bool lastWasCR = false;
+
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\r' || c == '\n') {
+      bool skip = (c == '\n' && lastWasCR);
+      lastWasCR = (c == '\r');
+      if (skip) continue;
+      line[len] = 0;
+      len = 0;
+      handleCommand(line);
+    } else {
+      lastWasCR = false;
+      if (len < (int)sizeof(line) - 1) line[len++] = c;
+    }
+  }
+}
+
 // ===== SETUP / LOOP =====
 void setup() {
   auto cfg = M5.config();
@@ -428,9 +807,11 @@ void setup() {
   FastLED.show();
 
   randomSeed(esp_random());
+  loadRuns();
 
   updateDisplay();
   Serial.println("Jasper Lights v" VERSION " ready! A: next pattern, B: brightness");
+  printHelp();
 }
 
 void loop() {
@@ -439,9 +820,16 @@ void loop() {
   if (now - lastFrameTime < FRAME_MS) return;
   lastFrameTime = now;
 
+  handleSerial();
+
   M5.update();
   if (M5.BtnA.wasPressed()) {
-    nextPattern();
+    if (tuning) {
+      char accept[] = "";
+      handleCommand(accept);
+    } else {
+      nextPattern();
+    }
     updateDisplay();
   }
   if (M5.BtnB.wasPressed()) {
@@ -449,6 +837,7 @@ void loop() {
     updateDisplay();
   }
 
-  renderPattern();
+  if (tuning) renderTune();
+  else renderPattern();
   FastLED.show();
 }

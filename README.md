@@ -19,10 +19,38 @@ Simple LED blinker for an M5StickC Plus2 driving a WS2811 strand. Derived from `
 | 5 | White Comet    | 1-3 white comets with soft tails gliding on black |
 | 6 | Breathe        | Whole strand gently breathing a soft pastel color |
 | 7 | Pastel Twinkle | Soft pastel lights fading in and out on black  |
+| 8 | Segment Map    | Each string and ring arc in its own fixed color (see below) |
+| 9 | Falling Rings  | A ring of light slides down all six strings at once and lands on the wooden ring (sometimes rises instead) |
 
 Patterns 3-7 are meant for a baby: slow, and mostly high-contrast black & white, which newborns see best.
 
 Each time a pattern is selected it picks new random speed, direction and spacing.
+
+## Structure map
+
+The strand hangs on a cone: a small hanging ring **A** at the top, six strings **A-1 … A-6** down to six equally spaced points **1 … 6** on a wooden ring (~9.5" across, strings ~7"). The ring arcs between points are **1-2, 2-3, 3-4, 4-5, 5-6, 6-1**.
+
+The strand runs `A → 5 → 4 → 3 → A → 4 → 3 → 2 → 1 → A → 2 → 1 → 6 → A → 5 → 6 → 1 → 2 → 3`, with a jumper at A between LEDs 99 and 100. That covers A-5, 3-4, 2-3 and 6-1 twice and 1-2 three times. Each pass along one segment is a *run* in `defaultRuns[]`, with its first and last LED index. `buildMap()` turns the runs into per-LED data that patterns can use:
+
+| Array        | Meaning |
+|--------------|---------|
+| `ledSeg[]`   | Segment: 0-5 = strings A-1..A-6, 6-11 = arcs 1-2..6-1 (`SEG_NONE` if unmapped) |
+| `ledPos[]`   | 0-255 along the segment: strings from A down, arcs from the lower point (6-1 from 6) |
+| `ledDown[]`  | 0 at A, 255 at the wooden ring |
+| `ledAngle[]` | 0-255 around the ring, point 1 = 0 |
+
+Segment Map colors: strings A-1..A-6 are red, yellow, green, cyan, blue, magenta; arcs 1-2..6-1 are orange, lime, sea green, azure, violet, pink.
+
+### Tuning the map
+
+The defaults are estimated from the dimensions. To correct them, open the serial monitor (115200 baud, with a line ending) and type `tune`. For each run, in strand order:
+
+- The run is lit white, its **first LED green** and **last LED red**. Everything else shows dimly in its Segment Map color.
+- **Enter** or `y` (or the A button): accept and go to the next run
+- `s N` / `e N`: set the start / end LED. `N M`: set both.
+- `b`: back one run, `q`: finish early
+
+Changing a run's end also moves the next run's start if they were touching (and the same for start). When you finish, the map is saved to flash and printed as C code; paste it over `defaultRuns[]` to make it permanent. Other commands: `map` prints the current map, `reset` forgets the saved map.
 
 ## Hardware config (top of `jasper_lights.ino`)
 
