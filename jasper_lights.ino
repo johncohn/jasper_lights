@@ -1,13 +1,15 @@
 /// @file    jasper_lights.ino
 /// @brief   Simple M5StickC Plus2 LED blinker for Jasper
-/// @version 1.5.0
+/// @version 1.6.0
 /// @date    2026-09-26
 /// @author  John Cohn (patterns adapted from m5lights_v1 / Larry's patterns)
 ///
 /// A button (big front button): next pattern (patterns cross-fade)
 /// B button (side button): cycle through 6 brightness levels
+/// Power button (left side): cycle through 6 speed levels
 ///
 /// @changelog
+/// v1.6.0 - Power button cycles 6 speed levels (0.4x-10x, level 2 = original speed)
 /// v1.5.0 - Per-string top skip (hidden LEDs at A) so heights line up; serial 'skip R K'
 /// v1.4.0 - Smoother White Comet, Falling Rings and Map Check (sub-LED positions,
 ///          soft leading edge); slower twinkles; serial 'pixel N' alignment check
@@ -27,7 +29,7 @@
 #include <FastLED.h>
 #include <Preferences.h>
 
-#define VERSION "1.5.0"
+#define VERSION "1.6.0"
 
 // Hardware config
 #define LED_PIN 32
@@ -44,6 +46,26 @@
 const uint8_t brightnessLevels[] = { 4, 8, 15, 25, 40, 60 };
 #define NUM_BRIGHTNESS_LEVELS (sizeof(brightnessLevels) / sizeof(brightnessLevels[0]))
 uint8_t brightnessIndex = 3;  // Start at 25
+
+// Speed levels cycled by the power button, in 1/16ths: 0.4x, 1x, 2x, 3.5x, 6x, 10x.
+// Level 2 (1x) is the speed the patterns were designed at.
+const uint8_t speedLevels[] = { 6, 16, 32, 56, 96, 160 };
+#define NUM_SPEED_LEVELS (sizeof(speedLevels) / sizeof(speedLevels[0]))
+uint8_t speedIndex = 1;
+
+// Scales a per-frame step by the speed setting. 'carry' keeps the leftover fraction
+// between frames (one per animated variable), so slow speeds still move smoothly.
+int speedStep(int step, int &carry) {
+  long x = (long)step * speedLevels[speedIndex] + carry;  // In 1/16ths
+  long whole = (x >= 0) ? x / 16 : -((-x + 15) / 16);     // Round down, also for negatives
+  carry = x - whole * 16;
+  return whole;
+}
+
+// (v + d) wrapped into 0..m-1
+int wrapAdd(int v, int d, int m) {
+  return ((v + d) % m + m) % m;
+}
 
 CRGB leds[NUM_LEDS];
 
@@ -153,10 +175,11 @@ struct Run {
 };
 
 const Run defaultRuns[] = {
+  // from, to, start, end, skip
   {NODE_A, 5,   0,  13},
   {5, 4,       14,  22},
   {4, 3,       23,  29},
-  {3, NODE_A,  30,  43},
+  {3, NODE_A,  30,  43, -2},
   {NODE_A, 4,  44,  57},
   {4, 3,       58,  65},
   {3, 2,       66,  74},
@@ -168,7 +191,7 @@ const Run defaultRuns[] = {
   {1, 6,      126, 133},
   {6, 5,      134, 142},
   {5, NODE_A, 143, 156},
-  {NODE_A, 6, 157, 167},
+  {NODE_A, 6, 157, 167, -3},
   {6, 1,      168, 177},
   {1, 2,      178, 189},
   {2, 3,      190, 196},
@@ -254,13 +277,14 @@ void buildMap() {
 // Pattern 0: Solid color slowly fading through the rainbow
 void solidColor(bool reset) {
   static int hue = 0;
+  static int carry = 0;
   if (reset) hue = random(1536);
 
   byte r, g, b;
   hsvToRgb(hue, 255, 255, &r, &g, &b);
   fill_solid(leds, NUM_LEDS, gammaRGB(r, g, b));
 
-  hue = (hue + 2) % 1536;
+  hue = wrapAdd(hue, speedStep(2, carry), 1536);
 }
 
 // Pattern 1: Rotating rainbow across the strand
@@ -268,6 +292,7 @@ void rainbow(bool reset) {
   static int colorOffset = 0;
   static int totalHueSpan = 1536;
   static int increment = 4;
+  static int carry = 0;
 
   if (reset) {
     colorOffset = 0;
@@ -283,7 +308,7 @@ void rainbow(bool reset) {
     leds[i] = gammaRGB(r, g, b);
   }
 
-  colorOffset += increment;
+  colorOffset = wrapAdd(colorOffset, speedStep(increment, carry), 1536);
 }
 
 // Pattern 2: Single-color sine waves with dark gaps, chasing along the strand
@@ -292,6 +317,7 @@ void sineWaveChase(bool reset) {
   static int waveSpan = 720;
   static int increment = 4;
   static int waveOffset = 0;
+  static int carry = 0;
 
   if (reset) {
     baseHue = random(1536);
@@ -314,7 +340,7 @@ void sineWaveChase(bool reset) {
     leds[i] = gammaRGB(r, g, b);
   }
 
-  waveOffset += increment;
+  waveOffset = wrapAdd(waveOffset, speedStep(increment, carry), 720);
 }
 
 // ----- Baby-friendly patterns -----
@@ -326,6 +352,7 @@ void bwStripes(bool reset) {
   static int stripeSpan = 720 * 5;  // 720 = one white + one black stripe
   static int increment = 2;
   static int offset = 0;
+  static int carry = 0;
 
   if (reset) {
     stripeSpan = 720 * (3 + random(6));  // 3-8 white stripes along the strand
@@ -340,7 +367,7 @@ void bwStripes(bool reset) {
     leds[i] = gammaRGB(v, v, v);
   }
 
-  offset += increment;
+  offset = wrapAdd(offset, speedStep(increment, carry), 720);
 }
 
 // Used by Starry Night and Pastel Twinkle: lights fade in and out at random spots.
@@ -350,6 +377,7 @@ void bwStripes(bool reset) {
 struct TwinkleState {
   uint8_t phase[NUM_LEDS];
   uint16_t hue[NUM_LEDS];
+  int carry;
 };
 
 // Explicit prototype so the Arduino builder doesn't auto-generate one above the struct
@@ -360,15 +388,19 @@ void twinkle(TwinkleState &state, bool reset, bool pastel) {
   uint16_t *hue = state.hue;
 
   if (reset) memset(phase, 0, sizeof(state.phase));
+  int step = speedStep(1, state.carry);  // ~4 seconds per twinkle at 1x
 
   for (int i = 0; i < NUM_LEDS; i++) {
     if (phase[i] == 0) {
-      if (random(1000) < 2) {  // Chance per frame of a new twinkle starting here
+      // Chance per frame of a new twinkle starting here (2 in 1000 at 1x)
+      if (random(16000) < 2 * speedLevels[speedIndex]) {
         phase[i] = 1;
         hue[i] = random(1536);
       }
+    } else if (phase[i] + step > 255) {
+      phase[i] = 0;
     } else {
-      phase[i] = (phase[i] == 255) ? 0 : phase[i] + 1;  // ~4 seconds per twinkle
+      phase[i] += step;
     }
 
     byte v = (phase[i] < 128) ? phase[i] * 2 : (255 - phase[i]) * 2;
@@ -394,6 +426,7 @@ void whiteComet(bool reset) {
   static int tailLength = 20;
   static int speed = 8;      // In 1/16ths of an LED per frame
   static long position = 0;  // In 1/16ths of an LED
+  static int carry = 0;
 
   if (reset) {
     numComets = 1 + random(3);
@@ -420,7 +453,7 @@ void whiteComet(bool reset) {
     leds[i] = gammaRGB(v, v, v);
   }
 
-  position += speed;
+  position += speedStep(speed, carry);
   if (position < 0) position += (long)NUM_LEDS * 16;
   if (position >= (long)NUM_LEDS * 16) position -= (long)NUM_LEDS * 16;
 }
@@ -429,6 +462,7 @@ void whiteComet(bool reset) {
 void breathe(bool reset) {
   static int hue = 0;
   static int phase = 0;
+  static int carryPhase = 0, carryHue = 0;
 
   if (reset) {
     hue = random(1536);
@@ -441,8 +475,8 @@ void breathe(bool reset) {
   hsvToRgb(hue, 160, v, &r, &g, &b);
   fill_solid(leds, NUM_LEDS, gammaRGB(r, g, b));
 
-  phase = (phase + 3) % 720;
-  hue = (hue + 1) % 1536;
+  phase = wrapAdd(phase, speedStep(3, carryPhase), 720);
+  hue = wrapAdd(hue, speedStep(1, carryHue), 1536);
 }
 
 // Pattern 7: Soft pastel lights twinkling on black
@@ -487,6 +521,7 @@ void fallingRings(bool reset) {
   static int speed = 8;
   static int hue = 0;
   static bool rising = false;
+  static int carry = 0;
   const int tail = 90;     // Length of the glow behind the leading edge
   const int lead = 24;     // Soft fade-in ahead of the leading edge (~1.3 LEDs)
 
@@ -510,7 +545,7 @@ void fallingRings(bool reset) {
     leds[i] = gammaRGB(r, g, b);
   }
 
-  pos += speed;
+  pos += speedStep(speed, carry);
   if (pos / 16 > 255 + tail + 20) {  // Fully faded, plus a short dark pause
     pos = -lead * 16;
     hue = (hue + 256 + random(512)) % 1536;
@@ -521,6 +556,7 @@ void fallingRings(bool reset) {
 void risingRainbow(bool reset) {
   static long offset = 0;   // In 1/16ths of a hue unit
   static int span = 768;    // Hue change from A to the ring
+  static int carry = 0;
 
   if (reset) {
     offset = random(1536) * 16L;
@@ -537,13 +573,14 @@ void risingRainbow(bool reset) {
     leds[i] = gammaRGB(r, g, b);
   }
 
-  offset = (offset + 8) % (1536L * 16);  // ~50 s per full rainbow cycle
+  offset = wrapAdd(offset, speedStep(8, carry), 1536 * 16);  // ~50 s per rainbow cycle at 1x
 }
 
 // Pattern 11: Rainbow around the ring, twisting up the strings, slowly turning
 void rainbowSpiral(bool reset) {
   static long offset = 0;   // In 1/16ths of a hue unit
   static int twist = 512;   // Extra hue change from A to the ring
+  static int carry = 0;
 
   if (reset) {
     offset = random(1536) * 16L;
@@ -559,7 +596,7 @@ void rainbowSpiral(bool reset) {
     leds[i] = gammaRGB(r, g, b);
   }
 
-  offset = (offset + 6) % (1536L * 16);  // ~70 s per turn
+  offset = wrapAdd(offset, speedStep(6, carry), 1536 * 16);  // ~70 s per turn at 1x
 }
 
 // Pattern 12: One or two soft pastel glows slowly circling the structure. Each
@@ -569,6 +606,7 @@ void slowOrbit(bool reset) {
   static int speed = 3;
   static int glows = 1;
   static int hue = 0;
+  static int carryAngle = 0, carryHue = 0;
 
   if (reset) {
     angle = random(256) * 16L;
@@ -597,8 +635,8 @@ void slowOrbit(bool reset) {
     leds[i] = gammaRGB(r, g, b);
   }
 
-  angle = (angle + speed + 256L * 16) % (256L * 16);
-  hue = (hue + 1) % 1536;
+  angle = wrapAdd(angle, speedStep(speed, carryAngle), 256 * 16);
+  hue = wrapAdd(hue, speedStep(1, carryHue), 1536);
 }
 
 // Pattern 13: Soft pastel waves drifting down the strings; the ring glows as each
@@ -606,6 +644,7 @@ void slowOrbit(bool reset) {
 void ripples(bool reset) {
   static int phase = 0;
   static int hue = 0;
+  static int carryPhase = 0, carryHue = 0;
 
   if (reset) {
     phase = random(720);
@@ -622,8 +661,9 @@ void ripples(bool reset) {
     leds[i] = gammaRGB(r, g, b);
   }
 
-  phase = (phase + 719) % 720;  // Step back one unit: waves move down, ~12 s each
-  hue = (hue + 1) % 1536;
+  // Stepping backward makes the waves move down, ~12 s each at 1x
+  phase = wrapAdd(phase, speedStep(-1, carryPhase), 720);
+  hue = wrapAdd(hue, speedStep(1, carryHue), 1536);
 }
 
 // Pattern 14: Diagnostic for the map. Repeats every 20 s:
@@ -766,18 +806,31 @@ void updateDisplay() {
   M5.Display.setTextColor(YELLOW);
   M5.Display.drawString(patternNames[currentPattern], 10, 34);
 
-  // Brightness: label plus one box per level, filled up to the current level
+  // Brightness and speed: label plus one box per level, filled up to the current level
   M5.Display.setTextColor(WHITE);
-  M5.Display.drawString("Bright " + String(brightnessIndex + 1) + "/" + String(NUM_BRIGHTNESS_LEVELS), 10, 62);
-  for (int i = 0; i < NUM_BRIGHTNESS_LEVELS; i++) {
-    int x = 10 + i * 36;
-    if (i <= brightnessIndex) M5.Display.fillRect(x, 86, 30, 14, YELLOW);
-    else M5.Display.drawRect(x, 86, 30, 14, WHITE);
+  M5.Display.drawString("Bright", 10, 60);
+  M5.Display.drawString("Speed", 10, 84);
+  for (int i = 0; i < 6; i++) {
+    int x = 96 + i * 23;
+    if (i <= brightnessIndex) M5.Display.fillRect(x, 60, 19, 14, YELLOW);
+    else M5.Display.drawRect(x, 60, 19, 14, WHITE);
+    if (i <= speedIndex) M5.Display.fillRect(x, 84, 19, 14, CYAN);
+    else M5.Display.drawRect(x, 84, 19, 14, WHITE);
   }
 
   M5.Display.setTextSize(1);
-  M5.Display.drawString("A: next pattern   B: brightness", 10, 110);
+  M5.Display.drawString("A: pattern  B: bright  PWR: speed", 10, 110);
   M5.Display.drawString("v" VERSION, 10, 122);
+}
+
+void setSpeed(int index) {
+  speedIndex = index;
+  Serial.printf("Speed -> %d/%d (%d.%02dx)\n", speedIndex + 1, NUM_SPEED_LEVELS,
+                speedLevels[speedIndex] / 16, speedLevels[speedIndex] % 16 * 100 / 16);
+}
+
+void nextSpeed() {
+  setSpeed((speedIndex + 1) % NUM_SPEED_LEVELS);
 }
 
 void nextBrightness() {
@@ -1035,7 +1088,7 @@ void printHelp() {
   Serial.println("          show A-5 / show 1-2 = light a segment, run N = light run N (1-18),");
   Serial.println("          pixel N = light pixel N (0 = top) on every string, then + / - to step,");
   Serial.println("          skip R K = hide K LEDs at the top of string run R (negative: gap),");
-  Serial.println("          off = back to patterns");
+  Serial.println("          off = back to patterns, speed N = set speed level 1-6");
 }
 
 void handleCommand(char *cmd) {
@@ -1047,6 +1100,10 @@ void handleCommand(char *cmd) {
     else if (strcasecmp(cmd, "map") == 0) printRuns();
     else if (strcasecmp(cmd, "reset") == 0) resetRuns();
     else if (strcasecmp(cmd, "off") == 0) stopShow();
+    else if (sscanf(cmd, "speed %d", &a) == 1) {
+      if (a < 1 || a > (int)NUM_SPEED_LEVELS) Serial.printf("  ?? Speed should be 1-%d\n", NUM_SPEED_LEVELS);
+      else setSpeed(a - 1);
+    }
     else if (strncasecmp(cmd, "show ", 5) == 0) {
       uint8_t seg = parseSegment(cmd + 5);
       if (seg == SEG_NONE) Serial.println("  ?? Segment should be like A-5 or 1-2");
@@ -1145,7 +1202,7 @@ void setup() {
   loadRuns();
 
   updateDisplay();
-  Serial.println("Jasper Lights v" VERSION " ready! A: next pattern, B: brightness");
+  Serial.println("Jasper Lights v" VERSION " ready! A: next pattern, B: brightness, PWR: speed");
   printHelp();
 }
 
@@ -1171,6 +1228,11 @@ void loop() {
   }
   if (M5.BtnB.wasPressed()) {
     nextBrightness();
+    updateDisplay();
+  }
+  // Power button (left side). A short press is safe; holding it ~6 s powers off.
+  if (M5.BtnPWR.wasClicked()) {
+    nextSpeed();
     updateDisplay();
   }
 

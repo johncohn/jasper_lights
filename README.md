@@ -5,7 +5,10 @@ LED controller for an M5StickC Plus2 driving a 200-LED WS2811 strand wrapped aro
 ## Use
 
 - **A button** (big front button): go to the next pattern. Patterns cross-fade over 1.5 s.
-- **B button** (side button): cycle through 6 brightness levels (4, 8, 15, 25, 40, 60), then back to the lowest. Starts at level 4 (25). The screen shows the current level.
+- **B button** (right side): cycle through 6 brightness levels (4, 8, 15, 25, 40, 60), then back to the lowest. Starts at level 4 (25).
+- **Power button** (left side, short press): cycle through 6 speed levels: 0.4x, 1x, 2x, 3.5x, 6x, 10x. Starts at level 2 (1x, the speed the patterns were designed at). Every pattern scales its motion by this, except the cross-fade and Map Check. Holding the power button ~6 s still turns the M5 off.
+
+The screen shows the current pattern, and brightness and speed as rows of boxes.
 
 ## Patterns
 
@@ -54,7 +57,7 @@ Segment Map colors: strings A-1..A-6 are red, yellow, green, cyan, blue, magenta
 
 ### Tuning the map
 
-`defaultRuns[]` holds the map as tuned on the real structure (2026-09-26). If the LEDs are moved or re-hung, re-tune: open the serial monitor (115200 baud, with a line ending) and type `tune`. For each run, in strand order:
+`defaultRuns[]` holds the map as tuned on the real structure (2026-09-26), including skips of -2 on A-3 and -3 on A-6. If the LEDs are moved or re-hung, re-tune: open the serial monitor (115200 baud, with a line ending) and type `tune`. For each run, in strand order:
 
 - The run is lit white, its **first LED green** and **last LED red**. Everything else shows dimly in its Segment Map color.
 - **Enter** or `y` (or the A button): accept and go to the next run
@@ -63,7 +66,7 @@ Segment Map colors: strings A-1..A-6 are red, yellow, green, cyan, blue, magenta
 
 Changing a run's end also moves the next run's start if they were touching (and the same for start). When you finish, the map is saved to flash and printed as C code; paste it over `defaultRuns[]` to make it permanent. A saved map overrides `defaultRuns[]` until you type `reset`.
 
-Serial commands outside tuning: `tune`, `map` (print the current map as C code), `reset` (forget the saved map and use `defaultRuns[]`).
+Serial commands outside tuning: `speed N` (1-6), `tune`, `map` (print the current map as C code), `reset` (forget the saved map and use `defaultRuns[]`).
 
 ### Checking the map
 
@@ -87,7 +90,7 @@ If you've lost track of which point is which, `show A-1`, `show A-2`, … find t
 
 ## Adding a pattern
 
-Write a `void myPattern(bool reset)` function that fills `leds[]` (and picks new parameters when `reset` is true). Then add it to `gPatterns[]` and give it a name in `patternNames[]`.
+Write a `void myPattern(bool reset)` function that fills `leds[]` (and picks new parameters when `reset` is true). Advance its animation with `speedStep(step, carry)` rather than adding `step` directly, so it follows the speed setting; keep one `static int carry` per animated variable. Then add it to `gPatterns[]` and give it a name in `patternNames[]`.
 
 Structure patterns use `ledSeg[]`, `ledPos[]`, `ledDown[]` and `ledAngle[]` (see above). For example, `fallingRings()` lights each LED by its `ledDown[]`, so a band moves down all six strings at once and reaches the ring together.
 
