@@ -1,17 +1,18 @@
 /// @file    jasper_lights.ino
 /// @brief   Simple M5StickC Plus2 LED blinker for Jasper
-/// @version 1.8.1
+/// @version 1.8.2
 /// @date    2026-09-26
 /// @author  John Cohn (patterns adapted from m5lights_v1 / Larry's patterns)
 ///
 /// Starts in auto mode: a new pattern every minute, in shuffled order.
 /// A button (big front button): next pattern, switching to manual mode (patterns
-///   cross-fade); hold 2 s to go back to auto mode; hold 5 s to turn off (deep sleep),
+///   cross-fade); hold 1.5 s to go back to auto mode; hold 3.5 s to turn off (deep sleep),
 ///   press again to turn on
 /// B button (side button): cycle through 6 brightness levels
 /// Power button (left side): cycle through 6 speed levels
 ///
 /// @changelog
+/// v1.8.2 - Shorter A holds: 1.5 s for auto mode, 3.5 s for off
 /// v1.8.1 - Turning back on with A always starts in auto mode
 /// v1.8.0 - Brightness, speed, pattern and mode saved and restored at power-up;
 ///          hold A 2 s = auto mode, 5 s = off (deep sleep), press A to turn on
@@ -41,7 +42,7 @@
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
 
-#define VERSION "1.8.1"
+#define VERSION "1.8.2"
 
 // Hardware config
 #define LED_PIN 32
@@ -844,8 +845,8 @@ bool needsReset = true;  // Next render of currentPattern starts fresh
 // Auto mode: move to the next pattern every AUTO_PATTERN_MS. A short press of A
 // switches to manual (A steps through patterns); a long press goes back to auto.
 #define AUTO_PATTERN_MS 60000
-#define AUTO_PRESS_MS 2000  // Hold A this long (and release) to go back to auto mode
-#define OFF_PRESS_MS 5000   // Hold A this long to turn off; press A again to turn on
+#define AUTO_PRESS_MS 1500  // Hold A this long (and release) to go back to auto mode
+#define OFF_PRESS_MS 3500   // Hold A this long to turn off; press A again to turn on
 bool autoMode = true;
 unsigned long patternStartTime = 0;
 
@@ -940,7 +941,7 @@ void loadSettings() {
 }
 
 // ===== OFF (DEEP SLEEP) =====
-// Holding A for 5 s turns everything off: LEDs dark, screen off, and the ESP32 in
+// Holding A for 3.5 s turns everything off: LEDs dark, screen off, and the ESP32 in
 // deep sleep, drawing almost nothing. Pressing A wakes it, which restarts the sketch
 // and restores the saved settings. The power-hold pin is kept high during sleep, or
 // on battery the M5 would lose power entirely and need the power button to restart.
@@ -1051,7 +1052,7 @@ void updateDisplay() {
   }
 
   M5.Display.setTextSize(1);
-  M5.Display.drawString("A:next 2s=auto 5s=off B:bri PWR:spd", 10, 110);
+  M5.Display.drawString("A:1.5s=auto 3.5s=off B:bri PWR:spd", 10, 110);
   M5.Display.drawString("v" VERSION " by zatar", 10, 122);
 }
 
@@ -1458,7 +1459,7 @@ void setup() {
   }
 
   updateDisplay();
-  Serial.println("Jasper Lights v" VERSION " ready! A: next pattern (hold 2 s: auto, 5 s: off), B: brightness, PWR: speed");
+  Serial.println("Jasper Lights v" VERSION " ready! A: next pattern (hold 1.5 s: auto, 3.5 s: off), B: brightness, PWR: speed");
   Serial.printf("%s mode, starting with %s, brightness %d/%d, speed %d/%d\n",
                 autoMode ? "Auto" : "Manual", patternNames[currentPattern],
                 brightnessIndex + 1, NUM_BRIGHTNESS_LEVELS, speedIndex + 1, NUM_SPEED_LEVELS);
@@ -1488,7 +1489,7 @@ void loop() {
     updateDisplay();
   }
   // Long presses: the screen says what releasing will do
-  static uint8_t holdStage = 0;  // 1: held 2 s (auto), 2: held 5 s (off)
+  static uint8_t holdStage = 0;  // 1: held for auto, 2: held for off
   if (M5.BtnA.isPressed()) {
     if (holdStage < 2 && M5.BtnA.pressedFor(OFF_PRESS_MS)) {
       holdStage = 2;
