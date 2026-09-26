@@ -1,6 +1,6 @@
 # Jasper Lights
 
-Simple LED blinker for an M5StickC Plus2 driving a WS2811 strand. Derived from `m5lights_v1`, without the sound detection, ESP-NOW sync and Fluffy/E1.31 code.
+LED controller for an M5StickC Plus2 driving a 200-LED WS2811 strand wrapped around a hanging ring structure (see [Structure map](#structure-map)). Derived from `m5lights_v1`, without the sound detection, ESP-NOW sync and Fluffy/E1.31 code.
 
 ## Use
 
@@ -22,15 +22,17 @@ Simple LED blinker for an M5StickC Plus2 driving a WS2811 strand. Derived from `
 | 8 | Segment Map    | Each string and ring arc in its own fixed color (see below) |
 | 9 | Falling Rings  | A ring of light slides down all six strings at once and lands on the wooden ring (sometimes rises instead) |
 
+Patterns 8-9 use the structure map; the others treat the strand as one long line.
+
 Patterns 3-7 are meant for a baby: slow, and mostly high-contrast black & white, which newborns see best.
 
 Each time a pattern is selected it picks new random speed, direction and spacing.
 
 ## Structure map
 
-The strand hangs on a cone: a small hanging ring **A** at the top, six strings **A-1 … A-6** down to six equally spaced points **1 … 6** on a wooden ring (~9.5" across, strings ~7"). The ring arcs between points are **1-2, 2-3, 3-4, 4-5, 5-6, 6-1**.
+The strand hangs on a cone: a small hanging ring **A** at the top, six strings **A-1 … A-6** down to six equally spaced points **1 … 6** on a wooden ring (~9.5" outside diameter, strings ~7"). LEDs are 1.5 cm apart. The ring arcs between points are **1-2, 2-3, 3-4, 4-5, 5-6, 6-1**.
 
-The strand runs `A → 5 → 4 → 3 → A → 4 → 3 → 2 → 1 → A → 2 → 1 → 6 → A → 5 → 6 → 1 → 2 → 3`, with a jumper at A between LEDs 99 and 100. That covers A-5, 3-4, 2-3 and 6-1 twice and 1-2 three times. Each pass along one segment is a *run* in `defaultRuns[]`, with its first and last LED index. `buildMap()` turns the runs into per-LED data that patterns can use:
+The strand runs `A → 5 → 4 → 3 → A → 4 → 3 → 2 → 1 → A → 2 → 1 → 6 → A → 5 → 6 → 1 → 2 → 3`, with a jumper at A between LEDs 99 and 100. That covers A-5, 3-4, 2-3 and 1-6 twice and 1-2 three times; the other segments once. LEDs 197-199 are past the end of the structure (after point 3) and are not mapped, so structure patterns leave them dark. Each pass along one segment is a *run* in `defaultRuns[]`, with its first and last LED index. `buildMap()` turns the runs into per-LED data that patterns can use:
 
 | Array        | Meaning |
 |--------------|---------|
@@ -39,18 +41,22 @@ The strand runs `A → 5 → 4 → 3 → A → 4 → 3 → 2 → 1 → A → 2 �
 | `ledDown[]`  | 0 at A, 255 at the wooden ring |
 | `ledAngle[]` | 0-255 around the ring, point 1 = 0 |
 
+Patterns should check `ledSeg[i] == SEG_NONE` and leave those LEDs black. Doubled segments get the same values on every copy, so they look like one segment.
+
 Segment Map colors: strings A-1..A-6 are red, yellow, green, cyan, blue, magenta; arcs 1-2..6-1 are orange, lime, sea green, azure, violet, pink.
 
 ### Tuning the map
 
-The defaults are estimated from the dimensions. To correct them, open the serial monitor (115200 baud, with a line ending) and type `tune`. For each run, in strand order:
+`defaultRuns[]` holds the map as tuned on the real structure (2026-09-26). If the LEDs are moved or re-hung, re-tune: open the serial monitor (115200 baud, with a line ending) and type `tune`. For each run, in strand order:
 
 - The run is lit white, its **first LED green** and **last LED red**. Everything else shows dimly in its Segment Map color.
 - **Enter** or `y` (or the A button): accept and go to the next run
 - `s N` / `e N`: set the start / end LED. `N M`: set both.
 - `b`: back one run, `q`: finish early
 
-Changing a run's end also moves the next run's start if they were touching (and the same for start). When you finish, the map is saved to flash and printed as C code; paste it over `defaultRuns[]` to make it permanent. Other commands: `map` prints the current map, `reset` forgets the saved map.
+Changing a run's end also moves the next run's start if they were touching (and the same for start). When you finish, the map is saved to flash and printed as C code; paste it over `defaultRuns[]` to make it permanent. A saved map overrides `defaultRuns[]` until you type `reset`.
+
+Serial commands outside tuning: `tune`, `map` (print the current map as C code), `reset` (forget the saved map and use `defaultRuns[]`).
 
 ## Hardware config (top of `jasper_lights.ino`)
 
@@ -66,10 +72,18 @@ Changing a run's end also moves the next run's start if they were touching (and 
 
 Write a `void myPattern(bool reset)` function that fills `leds[]` (and picks new parameters when `reset` is true). Then add it to `gPatterns[]` and give it a name in `patternNames[]`.
 
+Structure patterns use `ledSeg[]`, `ledPos[]`, `ledDown[]` and `ledAngle[]` (see above). For example, `fallingRings()` lights each LED by its `ledDown[]`, so a band moves down all six strings at once and reaches the ring together.
+
+Note: the Arduino builder auto-generates function prototypes near the top of the file. A function that takes a struct defined in the sketch (like `twinkle(TwinkleState&, ...)`) needs its own prototype right after the struct, or it won't compile.
+
 ## Build
 
 Board: **M5StickCPlus2** (`m5stack:esp32:m5stack_stickc_plus2`). Libraries: M5StickCPlus2, FastLED.
 
 ```
 arduino-cli compile --fqbn m5stack:esp32:m5stack_stickc_plus2 jasper_lights
+arduino-cli compile --fqbn m5stack:esp32:m5stack_stickc_plus2 -u -p /dev/cu.usbserial-XXXX jasper_lights
+arduino-cli monitor -p /dev/cu.usbserial-XXXX -c baudrate=115200
 ```
+
+Close the serial monitor before uploading; it holds the port.
