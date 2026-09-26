@@ -1,6 +1,6 @@
 /// @file    jasper_lights.ino
 /// @brief   Simple M5StickC Plus2 LED blinker for Jasper
-/// @version 1.2.1
+/// @version 1.3.0
 /// @date    2026-09-26
 /// @author  John Cohn (patterns adapted from m5lights_v1 / Larry's patterns)
 ///
@@ -8,6 +8,8 @@
 /// B button (side button): cycle through 6 brightness levels
 ///
 /// @changelog
+/// v1.3.0 - Rising Rainbow, Rainbow Spiral, Slow Orbit and Ripples patterns;
+///          slower, softer Falling Rings
 /// v1.2.1 - Tuned LED map built into the code
 /// v1.2.0 - Structure map of the hanging ring (strings A-1..A-6, arcs 1-2..6-1),
 ///          serial tuner for the map, Segment Map and Falling Rings patterns
@@ -20,7 +22,7 @@
 #include <FastLED.h>
 #include <Preferences.h>
 
-#define VERSION "1.2.1"
+#define VERSION "1.3.0"
 
 // Hardware config
 #define LED_PIN 32
@@ -462,14 +464,14 @@ void segmentMap(bool reset) {
 // wooden ring and fades out. Sometimes it rises from the ring up to A instead.
 void fallingRings(bool reset) {
   static int pos = 0;      // Leading edge, in 1/16ths of ledDown units
-  static int speed = 24;
+  static int speed = 8;
   static int hue = 0;
   static bool rising = false;
-  const int tail = 70;     // Length of the glow behind the leading edge
+  const int tail = 90;     // Length of the glow behind the leading edge
 
   if (reset) {
     pos = 0;
-    speed = 16 + random(20);
+    speed = 6 + random(6);  // ~7-11 s from A to the ring
     hue = random(1536);
     rising = random(3) == 0;
   }
@@ -495,6 +497,115 @@ void fallingRings(bool reset) {
   }
 }
 
+// Pattern 10: Rainbow from A down to the ring, drifting slowly up all strings together
+void risingRainbow(bool reset) {
+  static long offset = 0;   // In 1/16ths of a hue unit
+  static int span = 768;    // Hue change from A to the ring
+
+  if (reset) {
+    offset = random(1536) * 16L;
+    span = 512 + random(513);  // A third to two thirds of the rainbow
+  }
+
+  int base = offset / 16;
+  for (int i = 0; i < NUM_LEDS; i++) {
+    if (ledSeg[i] == SEG_NONE) { leds[i] = CRGB::Black; continue; }
+    // Hue grows with distance down, and the base grows over time, so each
+    // color moves up
+    byte r, g, b;
+    hsvToRgb(base + ledDown[i] * span / 256, 230, 255, &r, &g, &b);
+    leds[i] = gammaRGB(r, g, b);
+  }
+
+  offset = (offset + 8) % (1536L * 16);  // ~50 s per full rainbow cycle
+}
+
+// Pattern 11: Rainbow around the ring, twisting up the strings, slowly turning
+void rainbowSpiral(bool reset) {
+  static long offset = 0;   // In 1/16ths of a hue unit
+  static int twist = 512;   // Extra hue change from A to the ring
+
+  if (reset) {
+    offset = random(1536) * 16L;
+    twist = 256 + random(513);
+    if (random(2) == 0) twist = -twist;
+  }
+
+  int base = offset / 16;
+  for (int i = 0; i < NUM_LEDS; i++) {
+    if (ledSeg[i] == SEG_NONE) { leds[i] = CRGB::Black; continue; }
+    byte r, g, b;
+    hsvToRgb(base + ledAngle[i] * 6 + ledDown[i] * twist / 256, 230, 255, &r, &g, &b);
+    leds[i] = gammaRGB(r, g, b);
+  }
+
+  offset = (offset + 6) % (1536L * 16);  // ~70 s per turn
+}
+
+// Pattern 12: One or two soft pastel glows slowly circling the structure. Each
+// string lights up as a glow passes it, with the ring glowing underneath.
+void slowOrbit(bool reset) {
+  static long angle = 0;   // In 1/16ths of a ledAngle unit
+  static int speed = 3;
+  static int glows = 1;
+  static int hue = 0;
+
+  if (reset) {
+    angle = random(256) * 16L;
+    speed = random(2) ? 3 : -3;  // ~25 s per lap
+    glows = 1 + random(2);
+    hue = random(1536);
+  }
+
+  int period = 256 / glows;
+  int width = period * 2 / 5;
+  int a = angle / 16;
+  for (int i = 0; i < NUM_LEDS; i++) {
+    if (ledSeg[i] == SEG_NONE) { leds[i] = CRGB::Black; continue; }
+    // Angular distance to the nearest glow
+    int d = ((ledAngle[i] - a) % period + period) % period;
+    d = min(d, period - d);
+    byte v = 0;
+    if (d < width) {
+      int t = 255 * (width - d) / width;
+      v = t * t / 255;
+    }
+    // With two glows, the second one is the complementary color
+    int glowIndex = ((ledAngle[i] - a + period / 2) % 256 + 256) % 256 / period;
+    byte r, g, b;
+    hsvToRgb(hue + glowIndex * 768, 170, v, &r, &g, &b);
+    leds[i] = gammaRGB(r, g, b);
+  }
+
+  angle = (angle + speed + 256L * 16) % (256L * 16);
+  hue = (hue + 1) % 1536;
+}
+
+// Pattern 13: Soft pastel waves drifting down the strings; the ring glows as each
+// wave arrives
+void ripples(bool reset) {
+  static int phase = 0;
+  static int hue = 0;
+
+  if (reset) {
+    phase = random(720);
+    hue = random(1536);
+  }
+
+  for (int i = 0; i < NUM_LEDS; i++) {
+    if (ledSeg[i] == SEG_NONE) { leds[i] = CRGB::Black; continue; }
+    // 1.5 waves along a string; squared for darker gaps between waves
+    int s = fixSin(phase + ledDown[i] * 1080 / 256) + 127;  // 0..254
+    byte v = s * s / 254;
+    byte r, g, b;
+    hsvToRgb(hue + ledDown[i] * 2, 170, v, &r, &g, &b);
+    leds[i] = gammaRGB(r, g, b);
+  }
+
+  phase = (phase + 719) % 720;  // Step back one unit: waves move down, ~12 s each
+  hue = (hue + 1) % 1536;
+}
+
 // ===== PATTERN LIST =====
 // To add a pattern: write a function like the ones above, then add it here
 // and give it a name in patternNames[].
@@ -502,12 +613,13 @@ typedef void (*Pattern)(bool reset);
 Pattern gPatterns[] = {
   solidColor, rainbow, sineWaveChase,
   bwStripes, starryNight, whiteComet, breathe, pastelTwinkle,
-  segmentMap, fallingRings
+  segmentMap, fallingRings, risingRainbow, rainbowSpiral, slowOrbit, ripples
 };
 const char* patternNames[] = {
   "Solid", "Rainbow", "Sine Chase",
   "B&W Stripes", "Starry Night", "White Comet", "Breathe", "Pastel Twinkle",
-  "Segment Map", "Falling Rings"
+  "Segment Map", "Falling Rings", "Rising Rainbow", "Rainbow Spiral", "Slow Orbit",
+  "Ripples"
 };
 
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))

@@ -20,9 +20,13 @@ LED controller for an M5StickC Plus2 driving a 200-LED WS2811 strand wrapped aro
 | 6 | Breathe        | Whole strand gently breathing a soft pastel color |
 | 7 | Pastel Twinkle | Soft pastel lights fading in and out on black  |
 | 8 | Segment Map    | Each string and ring arc in its own fixed color (see below) |
-| 9 | Falling Rings  | A ring of light slides down all six strings at once and lands on the wooden ring (sometimes rises instead) |
+| 9 | Falling Rings  | A ring of light slowly slides down all six strings at once and lands on the wooden ring (sometimes rises instead) |
+| 10 | Rising Rainbow | Rainbow from A to the ring, drifting slowly up all strings together |
+| 11 | Rainbow Spiral | Rainbow around the ring, twisting up the strings, slowly turning |
+| 12 | Slow Orbit     | One or two soft pastel glows circling the structure, lighting each string as they pass |
+| 13 | Ripples        | Soft pastel waves drifting down the strings; the ring glows as each arrives |
 
-Patterns 8-9 use the structure map; the others treat the strand as one long line.
+Patterns 8-13 use the structure map and are all slow and gentle; the others treat the strand as one long line.
 
 Patterns 3-7 are meant for a baby: slow, and mostly high-contrast black & white, which newborns see best.
 
