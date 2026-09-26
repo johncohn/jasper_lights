@@ -1,6 +1,6 @@
 /// @file    jasper_lights.ino
 /// @brief   Simple M5StickC Plus2 LED blinker for Jasper
-/// @version 1.1.0
+/// @version 1.1.1
 /// @date    2026-09-26
 /// @author  John Cohn (patterns adapted from m5lights_v1 / Larry's patterns)
 ///
@@ -8,6 +8,7 @@
 /// B button (side button): cycle through 6 brightness levels
 ///
 /// @changelog
+/// v1.1.1 - Starry Night and Pastel Twinkle keep separate twinkle state
 /// v1.1.0 - Added baby-friendly patterns (B&W Stripes, Starry Night, White Comet,
 ///          Breathe, Pastel Twinkle), B button brightness, removed Wavy Flag
 /// v1.0.0 - Initial version stripped down from m5lights_v1
@@ -15,7 +16,7 @@
 #include <M5StickCPlus2.h>
 #include <FastLED.h>
 
-#define VERSION "1.1.0"
+#define VERSION "1.1.1"
 
 // Hardware config
 #define LED_PIN 32
@@ -215,13 +216,23 @@ void bwStripes(bool reset) {
   offset += increment;
 }
 
-// Shared by Starry Night and Pastel Twinkle: lights fade in and out at random spots.
+// Used by Starry Night and Pastel Twinkle: lights fade in and out at random spots.
+// Each pattern owns its own TwinkleState so they don't disturb each other when
+// both are drawn during a cross-fade.
 // phase 0 = off; 1..255 = rising then falling.
-void twinkle(bool reset, bool pastel) {
-  static uint8_t phase[NUM_LEDS];
-  static uint16_t hue[NUM_LEDS];
+struct TwinkleState {
+  uint8_t phase[NUM_LEDS];
+  uint16_t hue[NUM_LEDS];
+};
 
-  if (reset) memset(phase, 0, sizeof(phase));
+// Explicit prototype so the Arduino builder doesn't auto-generate one above the struct
+void twinkle(TwinkleState &state, bool reset, bool pastel);
+
+void twinkle(TwinkleState &state, bool reset, bool pastel) {
+  uint8_t *phase = state.phase;
+  uint16_t *hue = state.hue;
+
+  if (reset) memset(phase, 0, sizeof(state.phase));
 
   for (int i = 0; i < NUM_LEDS; i++) {
     if (phase[i] == 0) {
@@ -246,7 +257,8 @@ void twinkle(bool reset, bool pastel) {
 
 // Pattern 4: White stars twinkling on black
 void starryNight(bool reset) {
-  twinkle(reset, false);
+  static TwinkleState state;
+  twinkle(state, reset, false);
 }
 
 // Pattern 5: One to three white comets with fading tails gliding on black
@@ -307,7 +319,8 @@ void breathe(bool reset) {
 
 // Pattern 7: Soft pastel lights twinkling on black
 void pastelTwinkle(bool reset) {
-  twinkle(reset, true);
+  static TwinkleState state;
+  twinkle(state, reset, true);
 }
 
 // ===== PATTERN LIST =====
