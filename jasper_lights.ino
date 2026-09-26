@@ -1,6 +1,6 @@
 /// @file    jasper_lights.ino
 /// @brief   Simple M5StickC Plus2 LED blinker for Jasper
-/// @version 1.2.0
+/// @version 1.2.1
 /// @date    2026-09-26
 /// @author  John Cohn (patterns adapted from m5lights_v1 / Larry's patterns)
 ///
@@ -8,6 +8,7 @@
 /// B button (side button): cycle through 6 brightness levels
 ///
 /// @changelog
+/// v1.2.1 - Tuned LED map built into the code
 /// v1.2.0 - Structure map of the hanging ring (strings A-1..A-6, arcs 1-2..6-1),
 ///          serial tuner for the map, Segment Map and Falling Rings patterns
 /// v1.1.1 - Starry Night and Pastel Twinkle keep separate twinkle state
@@ -19,7 +20,7 @@
 #include <FastLED.h>
 #include <Preferences.h>
 
-#define VERSION "1.2.0"
+#define VERSION "1.2.1"
 
 // Hardware config
 #define LED_PIN 32
@@ -130,8 +131,8 @@ void hsvToRgb(int h, byte s, byte v, byte *r, byte *g, byte *b) {
 // segments two or three times. Each "run" below is one pass of the strand along one
 // segment, in strand order. LEDs 0-99 and 100-199 are joined by a jumper at A.
 //
-// Defaults were estimated from the dimensions (~0.52" per LED); fine-tune them with
-// the serial tuner (type "tune" in the serial monitor). Tuned values are saved in
+// These values were tuned on the real structure with the serial tuner (2026-09-26).
+// To re-tune, type "tune" in the serial monitor. Tuned values are saved in
 // flash and override these; "reset" goes back to these.
 
 #define NODE_A 0  // Points on the ring are 1..6
@@ -142,26 +143,28 @@ struct Run {
 };
 
 const Run defaultRuns[] = {
-  {NODE_A, 5,   0,  12},
-  {5, 4,       13,  22},
-  {4, 3,       23,  31},
-  {3, NODE_A,  32,  44},
-  {NODE_A, 4,  45,  58},
-  {4, 3,       59,  67},
-  {3, 2,       68,  76},
-  {2, 1,       77,  86},
-  {1, NODE_A,  87,  99},
+  {NODE_A, 5,   0,  13},
+  {5, 4,       14,  22},
+  {4, 3,       23,  29},
+  {3, NODE_A,  30,  43},
+  {NODE_A, 4,  44,  57},
+  {4, 3,       58,  65},
+  {3, 2,       66,  74},
+  {2, 1,       75,  84},
+  {1, NODE_A,  85,  99},
   // Jumper at A
-  {NODE_A, 2, 100, 113},
-  {2, 1,      114, 123},
-  {1, 6,      124, 132},
-  {6, NODE_A, 133, 146},
-  {NODE_A, 5, 147, 160},
-  {5, 6,      161, 170},
-  {6, 1,      171, 179},
-  {1, 2,      180, 189},
-  {2, 3,      190, 199},
+  {NODE_A, 2, 100, 115},
+  {2, 1,      116, 125},
+  {1, 6,      126, 133},
+  {6, NODE_A, 134, 142},
+  {NODE_A, 5, 143, 156},
+  {5, 6,      157, 167},
+  {6, 1,      168, 177},
+  {1, 2,      178, 189},
+  {2, 3,      190, 196},
+  // LEDs 197-199 are past the end of the structure
 };
+
 #define NUM_RUNS (sizeof(defaultRuns) / sizeof(defaultRuns[0]))
 Run runs[NUM_RUNS];
 const char* nodeNames[] = { "A", "1", "2", "3", "4", "5", "6" };
