@@ -6,11 +6,19 @@ LED controller for an M5StickC Plus2 driving a 200-LED WS2811 strand wrapped aro
 
 The lights start in **auto mode**: a new pattern every minute (`AUTO_PATTERN_MS`), in shuffled order. Every pattern plays once before the order is reshuffled, and patterns cross-fade over 1.5 s.
 
-- **A button** (big front button): short press goes to the next pattern and switches to **manual mode**, where the lights stay on the chosen pattern. **Hold 1 s** to go back to auto mode. The screen shows AUTO or MAN.
+- **A button** (big front M5 button) does everything important:
+  - **Short press**: next pattern, and switch to **manual mode** (the lights stay on the chosen pattern). The screen shows AUTO or MAN.
+  - **Hold 2 s** and release: back to auto mode.
+  - **Hold 5 s**: turn **off** (LEDs dark, screen off, ESP32 in deep sleep). The screen tells you what releasing will do.
+  - **Press while off**: turn back on.
 - **B button** (right side): cycle through 6 brightness levels (4, 8, 15, 25, 40, 60), then back to the lowest. Starts at level 4 (25).
 - **Power button** (left side, short press): cycle through 6 speed levels: 0.4x, 1x, 2x, 3.5x, 6x, 10x. Starts at level 2 (1x, the speed the patterns were designed at). Every pattern scales its motion by this, except the cross-fade and Map Check. Holding the power button ~6 s still turns the M5 off.
 
 The screen shows the current pattern, and brightness and speed as rows of boxes.
+
+Brightness, speed, the current pattern and auto/manual mode are saved in flash whenever they change and restored at power-up or when turned back on.
+
+"Off" keeps the M5's power-hold pin on during deep sleep, so the M5 wakes with the A button instead of needing the power button. The Plus2 can't switch off its 5V output in software, so the LED strip stays powered (dark) while off and its idle current is the main battery drain.
 
 ## Patterns
 

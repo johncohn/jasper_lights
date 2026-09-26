@@ -1,16 +1,19 @@
 /// @file    jasper_lights.ino
 /// @brief   Simple M5StickC Plus2 LED blinker for Jasper
-/// @version 1.7.0
+/// @version 1.8.0
 /// @date    2026-09-26
 /// @author  John Cohn (patterns adapted from m5lights_v1 / Larry's patterns)
 ///
 /// Starts in auto mode: a new pattern every minute, in shuffled order.
 /// A button (big front button): next pattern, switching to manual mode (patterns
-///   cross-fade); hold 1 s to go back to auto mode
+///   cross-fade); hold 2 s to go back to auto mode; hold 5 s to turn off (deep sleep),
+///   press again to turn on
 /// B button (side button): cycle through 6 brightness levels
 /// Power button (left side): cycle through 6 speed levels
 ///
 /// @changelog
+/// v1.8.0 - Brightness, speed, pattern and mode saved and restored at power-up;
+///          hold A 2 s = auto mode, 5 s = off (deep sleep), press A to turn on
 /// v1.7.0 - Auto mode (new pattern every minute, long press A to return to it),
 ///          shuffled pattern order, test patterns behind INCLUDE_TEST_PATTERNS, and
 ///          B&W structure patterns: Cone Stripes, Pinwheel, B&W Spiral, Strings & Ring
@@ -33,8 +36,11 @@
 #include <M5StickCPlus2.h>
 #include <FastLED.h>
 #include <Preferences.h>
+#include <driver/gpio.h>
+#include <esp_sleep.h>
+#include <driver/rtc_io.h>
 
-#define VERSION "1.7.0"
+#define VERSION "1.8.0"
 
 // Hardware config
 #define LED_PIN 32
@@ -73,6 +79,7 @@ int wrapAdd(int v, int d, int m) {
 }
 
 CRGB leds[NUM_LEDS];
+Preferences prefs;  // Flash storage for the LED map and saved settings
 
 // ===== GAMMA CORRECTION =====
 // Extends black range (0-41 -> pure black) for dramatic dark gaps and rich colors
@@ -836,7 +843,8 @@ bool needsReset = true;  // Next render of currentPattern starts fresh
 // Auto mode: move to the next pattern every AUTO_PATTERN_MS. A short press of A
 // switches to manual (A steps through patterns); a long press goes back to auto.
 #define AUTO_PATTERN_MS 60000
-#define LONG_PRESS_MS 1000
+#define AUTO_PRESS_MS 2000  // Hold A this long (and release) to go back to auto mode
+#define OFF_PRESS_MS 5000   // Hold A this long to turn off; press A again to turn on
 bool autoMode = true;
 unsigned long patternStartTime = 0;
 
@@ -868,6 +876,7 @@ void nextPattern() {
   if (++playPos >= NUM_PATTERNS) shufflePlayOrder();
   currentPattern = playOrder[playPos];
   patternStartTime = millis();
+  saveSettings();
   needsReset = true;
   isFading = true;
   fadeStartTime = millis();
@@ -896,6 +905,90 @@ void renderPattern() {
 
   gPatterns[currentPattern](needsReset);
   needsReset = false;
+}
+
+// ===== SAVED SETTINGS =====
+// Brightness, speed, pattern and auto/manual mode are saved in flash whenever they
+// change, and restored at power-up. The pattern is saved by name, so adding or
+// reordering patterns doesn't restore the wrong one.
+void saveSettings() {
+  prefs.begin("jlstate", false);
+  prefs.putUChar("bright", brightnessIndex);
+  prefs.putUChar("speed", speedIndex);
+  prefs.putBool("auto", autoMode);
+  prefs.putString("pattern", patternNames[currentPattern]);
+  prefs.end();
+}
+
+void loadSettings() {
+  prefs.begin("jlstate", true);
+  brightnessIndex = min((int)prefs.getUChar("bright", brightnessIndex), (int)NUM_BRIGHTNESS_LEVELS - 1);
+  speedIndex = min((int)prefs.getUChar("speed", speedIndex), (int)NUM_SPEED_LEVELS - 1);
+  autoMode = prefs.getBool("auto", true);
+  String name = prefs.getString("pattern", "");
+  prefs.end();
+
+  // Start the shuffled order with the saved pattern
+  for (int i = 0; i < NUM_PATTERNS; i++) {
+    if (name == patternNames[playOrder[i]]) {
+      uint8_t t = playOrder[0]; playOrder[0] = playOrder[i]; playOrder[i] = t;
+      break;
+    }
+  }
+  currentPattern = playOrder[0];
+}
+
+// ===== OFF (DEEP SLEEP) =====
+// Holding A for 5 s turns everything off: LEDs dark, screen off, and the ESP32 in
+// deep sleep, drawing almost nothing. Pressing A wakes it, which restarts the sketch
+// and restores the saved settings. The power-hold pin is kept high during sleep, or
+// on battery the M5 would lose power entirely and need the power button to restart.
+#define BTN_A_PIN GPIO_NUM_37
+#define POWER_HOLD_PIN GPIO_NUM_4
+
+// Waits (up to 3 s) for A to be released
+void waitForRelease() {
+  unsigned long start = millis();
+  while (digitalRead(BTN_A_PIN) == LOW && millis() - start < 3000) delay(10);
+  delay(50);
+}
+
+void turnOff() {
+  saveSettings();
+  fill_solid(leds, NUM_LEDS, CRGB::Black);
+  FastLED.show();
+  M5.Display.setBrightness(0);
+  M5.Display.sleep();
+  Serial.println("Off. Press A to turn back on.");
+  Serial.flush();
+
+  // Wait for A to be released, or it would wake straight away
+  waitForRelease();
+
+  // Keep the LED data line low and the power held on through deep sleep
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+  gpio_hold_en((gpio_num_t)LED_PIN);
+  gpio_hold_en(POWER_HOLD_PIN);
+  gpio_deep_sleep_hold_en();
+
+  esp_sleep_enable_ext0_wakeup(BTN_A_PIN, 0);  // Wake when A goes low (pressed)
+  esp_deep_sleep_start();
+}
+
+// Shown while A is held long enough to do something on release
+void showHoldScreen(bool off) {
+  M5.Display.fillScreen(off ? BLACK : DARKGREY);
+  M5.Display.setTextColor(WHITE);
+  M5.Display.setTextSize(2);
+  if (off) {
+    M5.Display.drawString("Release to", 10, 40);
+    M5.Display.drawString("turn OFF", 10, 66);
+  } else {
+    M5.Display.drawString("Release: AUTO", 10, 40);
+    M5.Display.drawString("Keep holding:", 10, 74);
+    M5.Display.drawString("OFF", 10, 98);
+  }
 }
 
 // ===== DISPLAY =====
@@ -957,12 +1050,13 @@ void updateDisplay() {
   }
 
   M5.Display.setTextSize(1);
-  M5.Display.drawString("A:next hold=auto  B:bright  PWR:speed", 10, 110);
+  M5.Display.drawString("A:next 2s=auto 5s=off B:bri PWR:spd", 10, 110);
   M5.Display.drawString("v" VERSION " by zatar", 10, 122);
 }
 
 void setSpeed(int index) {
   speedIndex = index;
+  saveSettings();
   Serial.printf("Speed -> %d/%d (%d.%02dx)\n", speedIndex + 1, NUM_SPEED_LEVELS,
                 speedLevels[speedIndex] / 16, speedLevels[speedIndex] % 16 * 100 / 16);
 }
@@ -974,6 +1068,7 @@ void nextSpeed() {
 void nextBrightness() {
   brightnessIndex = (brightnessIndex + 1) % NUM_BRIGHTNESS_LEVELS;
   FastLED.setBrightness(brightnessLevels[brightnessIndex]);
+  saveSettings();
   Serial.printf("Brightness -> %d/%d (%d)\n", brightnessIndex + 1, NUM_BRIGHTNESS_LEVELS,
                 brightnessLevels[brightnessIndex]);
 }
@@ -981,7 +1076,6 @@ void nextBrightness() {
 // ===== MAP STORAGE =====
 // Only the start/end of each run are saved, so a change to the strand path in
 // defaultRuns[] (different number of runs) makes old saved values be ignored.
-Preferences prefs;
 
 void loadRuns() {
   memcpy(runs, defaultRuns, sizeof(runs));
@@ -1329,6 +1423,12 @@ void setup() {
   M5.begin(cfg);
   M5.Display.setRotation(1);
 
+  // Release the pins held through deep sleep (see turnOff())
+  bool wokeFromOff = (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0);
+  gpio_deep_sleep_hold_dis();
+  gpio_hold_dis(POWER_HOLD_PIN);
+  gpio_hold_dis((gpio_num_t)LED_PIN);
+
   Serial.begin(115200);
 
   FastLED.addLeds<CHIPSET, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
@@ -1340,13 +1440,26 @@ void setup() {
   loadRuns();
 
   shufflePlayOrder();
-  currentPattern = playOrder[0];
+  loadSettings();
+  FastLED.setBrightness(brightnessLevels[brightnessIndex]);
   patternStartTime = millis();
-  M5.BtnA.setHoldThresh(LONG_PRESS_MS);
+  M5.BtnA.setHoldThresh(AUTO_PRESS_MS);
+
+  // After waking with A, wait for it to be released so that press isn't
+  // taken as "next pattern"
+  if (wokeFromOff) {
+    // Waking leaves the A pin in RTC mode, where normal reads always see "pressed"
+    rtc_gpio_deinit(BTN_A_PIN);
+    pinMode(BTN_A_PIN, INPUT);
+    waitForRelease();
+    M5.update();
+  }
 
   updateDisplay();
-  Serial.println("Jasper Lights v" VERSION " ready! A: next pattern (hold: auto), B: brightness, PWR: speed");
-  Serial.printf("Auto mode, starting with %s\n", patternNames[currentPattern]);
+  Serial.println("Jasper Lights v" VERSION " ready! A: next pattern (hold 2 s: auto, 5 s: off), B: brightness, PWR: speed");
+  Serial.printf("%s mode, starting with %s, brightness %d/%d, speed %d/%d\n",
+                autoMode ? "Auto" : "Manual", patternNames[currentPattern],
+                brightnessIndex + 1, NUM_BRIGHTNESS_LEVELS, speedIndex + 1, NUM_SPEED_LEVELS);
   printHelp();
 }
 
@@ -1372,11 +1485,34 @@ void loop() {
     }
     updateDisplay();
   }
-  if (M5.BtnA.wasHold() && !tuning && !SHOWING && !autoMode) {
-    autoMode = true;
-    patternStartTime = millis();
-    Serial.println("Auto mode");
-    updateDisplay();
+  // Long presses: the screen says what releasing will do
+  static uint8_t holdStage = 0;  // 1: held 2 s (auto), 2: held 5 s (off)
+  if (M5.BtnA.isPressed()) {
+    if (holdStage < 2 && M5.BtnA.pressedFor(OFF_PRESS_MS)) {
+      holdStage = 2;
+      showHoldScreen(true);
+    } else if (holdStage < 1 && M5.BtnA.pressedFor(AUTO_PRESS_MS)) {
+      holdStage = 1;
+      showHoldScreen(false);
+    }
+  }
+  if (M5.BtnA.wasReleased()) {
+    if (holdStage == 2) turnOff();  // Doesn't return
+    if (holdStage == 1) {
+      if (!tuning && !SHOWING && !autoMode) {
+        autoMode = true;
+        patternStartTime = millis();
+        saveSettings();
+        Serial.println("Auto mode");
+      }
+      updateDisplay();
+    }
+    holdStage = 0;
+  }
+  if (holdStage == 2) {  // About to turn off: go dark now
+    fill_solid(leds, NUM_LEDS, CRGB::Black);
+    FastLED.show();
+    return;
   }
   if (autoMode && !tuning && !SHOWING && millis() - patternStartTime >= AUTO_PATTERN_MS) {
     nextPattern();
