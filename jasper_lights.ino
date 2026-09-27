@@ -1,6 +1,6 @@
 /// @file    jasper_lights.ino
 /// @brief   Simple M5StickC Plus2 LED blinker for Jasper
-/// @version 1.9.1
+/// @version 1.9.2
 /// @date    2026-09-26
 /// @author  John Cohn (patterns adapted from m5lights_v1 / Larry's patterns)
 ///
@@ -12,6 +12,8 @@
 /// Power button (left side): cycle through 6 speed levels
 ///
 /// @changelog
+/// v1.9.2 - Spatial dithering with fixed per-LED thresholds: smooth large fades,
+///          no temporal dithering (no flicker)
 /// v1.9.1 - No dithering on dim LEDs (it flickered); half-step dithering at 66 Hz
 ///          only on bright ones; hysteresis on rounding
 /// v1.9.0 - Smooth fades: 16-bit gamma and brightness with temporal dithering at
@@ -47,7 +49,7 @@
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
 
-#define VERSION "1.9.1"
+#define VERSION "1.9.2"
 
 // Hardware config
 #define LED_PIN 32
@@ -92,19 +94,19 @@ Preferences prefs;  // Flash storage for the LED map and saved settings
 // Patterns write 0-255 values into leds[] on a perceptual scale. showLeds() turns
 // them into light: a smooth gamma curve, color correction and the brightness level
 // are applied at 16-bit precision, then each value is rounded to one of the LED's
-// 256 steps.
+// 256 steps (at low brightness only a couple of dozen of them are in use).
 //
-// At bright levels, a value between two steps is shown by alternating between them
-// on every refresh (~66 Hz, too fast to see, and each step is small there), which
-// doubles the smoothness of fades. Dim LEDs are never dithered: switching a dim LED
-// between, say, 1 and 2 changes its brightness a lot, and doing it now and then
-// looks like flickering. They just round, with a little hysteresis so a value
-// hovering near the midpoint doesn't chatter.
-#define DITHER_MIN_LEVEL 8   // Only dither at or above this output step
-#define HYSTERESIS 32        // In 1/256ths of a step, beyond the rounding midpoint
+// Rounding uses spatial dithering: every LED has its own fixed threshold, spread
+// evenly across the strand. At a value of 3.4 steps, the 40% of LEDs with the lowest
+// thresholds show 4 and the rest show 3. During a fade, LEDs step up one at a time
+// instead of all at once, so large areas brighten smoothly, but each LED only
+// changes once per step (nothing flickers). Hysteresis stops an LED chattering if
+// its value hovers right at its threshold.
+#define HYSTERESIS 24        // In 1/256ths of a step
 
 CRGB outLeds[NUM_LEDS];                // What is actually sent to the strip
 uint16_t gamma16[256];                 // Pattern value -> light, 0..65535
+uint8_t threshold[NUM_LEDS];           // Per-LED rounding threshold, 1..255
 const uint8_t colorCorrection[3] = { 255, 176, 240 };  // FastLED's TypicalLEDStrip
 
 void initOutput() {
@@ -113,6 +115,13 @@ void initOutput() {
   for (int x = 0; x < 256; x++) {
     float f = (x <= 14) ? 0.0f : powf((x - 14) / 241.0f, 2.15f);
     gamma16[x] = (uint16_t)(f * (225.0f / 255.0f) * 65535.0f + 0.5f);
+  }
+  // Evenly spaced thresholds in a random order along the strand. Never 0, or
+  // black would round up.
+  for (int i = 0; i < NUM_LEDS; i++) threshold[i] = 1 + i * 254 / (NUM_LEDS - 1);
+  for (int i = NUM_LEDS - 1; i > 0; i--) {
+    int j = random(i + 1);
+    uint8_t t = threshold[i]; threshold[i] = threshold[j]; threshold[j] = t;
   }
 }
 
@@ -131,21 +140,13 @@ void showLeds() {
     for (int c = 0; c < 3; c++) {
       // Light in 1/256ths of an output step
       int32_t v = (uint32_t)gamma16[leds[i][c]] * colorCorrection[c] / 255 * bright / 255;
-      int level = v >> 8;
-      int frac = v & 255;
-      if (level >= DITHER_MIN_LEVEL) {
-        // Round to the nearest half step; a half step alternates every refresh,
-        // in opposite phase on neighboring LEDs
-        if (frac < 64) outLeds[i][c] = level;
-        else if (frac >= 192) outLeds[i][c] = level + 1;
-        else outLeds[i][c] = level + ((showCount + i + c) & 1);
-      } else {
-        // Round, but only move off the current step once clearly past the midpoint
-        int prev = outLeds[i][c];
-        int target = (v + 128) >> 8;
-        if (target != prev && abs(v - prev * 256) > 128 + HYSTERESIS) outLeds[i][c] = target;
-        else if (abs(target - prev) > 1) outLeds[i][c] = target;
-      }
+      int th = threshold[i];
+      int target = (v - th + 256) >> 8;  // Steps, rounded up past this LED's threshold
+      int prev = outLeds[i][c];
+      // Only move one step up or down once clearly past the threshold
+      if (target == prev + 1 && v < prev * 256 + th + HYSTERESIS) target = prev;
+      else if (target == prev - 1 && v > (prev - 1) * 256 + th - HYSTERESIS) target = prev;
+      outLeds[i][c] = target;
     }
   }
   FastLED.show();
