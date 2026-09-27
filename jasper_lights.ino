@@ -1,6 +1,6 @@
 /// @file    jasper_lights.ino
 /// @brief   Simple M5StickC Plus2 LED blinker for Jasper
-/// @version 1.9.2
+/// @version 1.10.0
 /// @date    2026-09-26
 /// @author  John Cohn (patterns adapted from m5lights_v1 / Larry's patterns)
 ///
@@ -9,9 +9,13 @@
 ///   cross-fade); hold 1.5 s to go back to auto mode; hold 3.5 s to turn off (deep sleep),
 ///   press again to turn on
 /// B button (side button): cycle through 6 brightness levels
-/// Power button (left side): cycle through 6 speed levels
+/// Power button (left side): cycle through 6 speed levels; hold 1 s to toggle
+///   black & white mode (only B&W patterns)
+/// Turns itself off after an hour without button presses
 ///
 /// @changelog
+/// v1.10.0 - B&W mode (hold power button), auto-off after an hour idle, whites stay
+///           white at low brightness (channels round together, correction fades in)
 /// v1.9.2 - Spatial dithering with fixed per-LED thresholds: smooth large fades,
 ///          no temporal dithering (no flicker)
 /// v1.9.1 - No dithering on dim LEDs (it flickered); half-step dithering at 66 Hz
@@ -49,7 +53,7 @@
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
 
-#define VERSION "1.9.2"
+#define VERSION "1.10.0"
 
 // Hardware config
 #define LED_PIN 32
@@ -102,11 +106,22 @@ Preferences prefs;  // Flash storage for the LED map and saved settings
 // instead of all at once, so large areas brighten smoothly, but each LED only
 // changes once per step (nothing flickers). Hysteresis stops an LED chattering if
 // its value hovers right at its threshold.
-#define HYSTERESIS 24        // In 1/256ths of a step
+//
+// Only the brightest channel of each LED is rounded that way; the other two are set
+// in proportion to it, so all three step together. Rounding them separately made
+// fading whites flash red or blue at their edges.
+//
+// Color correction (the LEDs' green and blue are stronger than red) can't be shown
+// with the few steps used at low brightness: green at 69% of 2 steps rounds to 1,
+// which looks lavender. So it fades in from none at the bottom step to full at
+// FULL_CORRECTION_LEVEL.
+#define HYSTERESIS 24              // In 1/256ths of a step
+#define FULL_CORRECTION_LEVEL 8    // Output step at which color correction is complete
 
 CRGB outLeds[NUM_LEDS];                // What is actually sent to the strip
 uint16_t gamma16[256];                 // Pattern value -> light, 0..65535
 uint8_t threshold[NUM_LEDS];           // Per-LED rounding threshold, 1..255
+uint8_t ledLevel[NUM_LEDS];            // Current step of each LED's brightest channel
 const uint8_t colorCorrection[3] = { 255, 176, 240 };  // FastLED's TypicalLEDStrip
 
 void initOutput() {
@@ -137,16 +152,30 @@ void showLeds() {
   }
   uint32_t bright = brightnessLevels[brightnessIndex];
   for (int i = 0; i < NUM_LEDS; i++) {
+    // Light per channel, in 1/256ths of an output step, before color correction
+    int32_t v[3];
+    for (int c = 0; c < 3; c++) v[c] = (uint32_t)gamma16[leds[i][c]] * bright / 255;
+    int32_t m = max(v[0], max(v[1], v[2]));
+
+    // Round the brightest channel at this LED's threshold, with hysteresis
+    int th = threshold[i];
+    int level = (m - th + 256) >> 8;
+    int prev = ledLevel[i];
+    if (level == prev + 1 && m < prev * 256 + th + HYSTERESIS) level = prev;
+    else if (level == prev - 1 && m > (prev - 1) * 256 + th - HYSTERESIS) level = prev;
+    if (m == 0) level = 0;  // Black is black (and m is divided by below)
+    ledLevel[i] = level;
+
+    if (level == 0) {
+      outLeds[i] = CRGB::Black;
+      continue;
+    }
+    // Color correction, fading in from none at step 1 to full at FULL_CORRECTION_LEVEL
+    int blend = min(level - 1, FULL_CORRECTION_LEVEL - 1);  // 0..FULL_CORRECTION_LEVEL-1
     for (int c = 0; c < 3; c++) {
-      // Light in 1/256ths of an output step
-      int32_t v = (uint32_t)gamma16[leds[i][c]] * colorCorrection[c] / 255 * bright / 255;
-      int th = threshold[i];
-      int target = (v - th + 256) >> 8;  // Steps, rounded up past this LED's threshold
-      int prev = outLeds[i][c];
-      // Only move one step up or down once clearly past the threshold
-      if (target == prev + 1 && v < prev * 256 + th + HYSTERESIS) target = prev;
-      else if (target == prev - 1 && v > (prev - 1) * 256 + th - HYSTERESIS) target = prev;
-      outLeds[i][c] = target;
+      int corr = 255 - (255 - colorCorrection[c]) * blend / (FULL_CORRECTION_LEVEL - 1);
+      // This channel's share of the brightest one, times the rounded level
+      outLeds[i][c] = (v[c] * level * corr / 255 + m / 2) / m;
     }
   }
   FastLED.show();
@@ -869,30 +898,31 @@ typedef void (*Pattern)(bool reset);
 struct PatternEntry {
   Pattern fn;
   const char* name;
+  bool bw;  // Black & white only: included in B&W mode
 };
 
 // Fixed play order, mixing color, black & white, and structure patterns
 const PatternEntry patternList[] = {
-  { solidColor,     "Solid" },
-  { coneStripes,    "Cone Stripes" },
-  { rainbowSpiral,  "Rainbow Spiral" },
-  { starryNight,    "Starry Night" },
-  { fallingRings,   "Falling Rings" },
-  { rainbow,        "Rainbow" },
-  { pinwheel,       "Pinwheel" },
-  { ripples,        "Ripples" },
-  { whiteComet,     "White Comet" },
-  { risingRainbow,  "Rising Rainbow" },
-  { bwStripes,      "B&W Stripes" },
-  { slowOrbit,      "Slow Orbit" },
-  { breathe,        "Breathe" },
-  { bwSpiral,       "B&W Spiral" },
-  { sineWaveChase,  "Sine Chase" },
-  { stringsAndRing, "Strings & Ring" },
-  { pastelTwinkle,  "Pastel Twinkle" },
+  { solidColor,     "Solid",           false },
+  { coneStripes,    "Cone Stripes",    true  },
+  { rainbowSpiral,  "Rainbow Spiral",  false },
+  { starryNight,    "Starry Night",    true  },
+  { fallingRings,   "Falling Rings",   false },
+  { rainbow,        "Rainbow",         false },
+  { pinwheel,       "Pinwheel",        true  },
+  { ripples,        "Ripples",         false },
+  { whiteComet,     "White Comet",     true  },
+  { risingRainbow,  "Rising Rainbow",  false },
+  { bwStripes,      "B&W Stripes",     true  },
+  { slowOrbit,      "Slow Orbit",      false },
+  { breathe,        "Breathe",         false },
+  { bwSpiral,       "B&W Spiral",      true  },
+  { sineWaveChase,  "Sine Chase",      false },
+  { stringsAndRing, "Strings & Ring",  true  },
+  { pastelTwinkle,  "Pastel Twinkle",  false },
 #if INCLUDE_TEST_PATTERNS
-  { segmentMap,     "Segment Map" },
-  { mapCheck,       "Map Check" },
+  { segmentMap,     "Segment Map",     false },
+  { mapCheck,       "Map Check",       false },
 #endif
 };
 
@@ -905,9 +935,13 @@ bool needsReset = true;  // Next render of currentPattern starts fresh
 // Auto mode: move to the next pattern every AUTO_PATTERN_MS. A short press of A
 // switches to manual (A steps through patterns); a long press goes back to auto.
 #define AUTO_PATTERN_MS 60000
+#define AUTO_OFF_MS (60UL * 60 * 1000)  // Turn off after an hour with no button presses
+#define BW_PRESS_MS 1000   // Hold the power button this long to toggle B&W mode
 #define AUTO_PRESS_MS 1500  // Hold A this long (and release) to go back to auto mode
 #define OFF_PRESS_MS 3500   // Hold A this long to turn off; press A again to turn on
 bool autoMode = true;
+bool bwMode = false;          // Only black & white patterns
+unsigned long lastActivityTime = 0;  // Last button press or serial command, for auto-off
 unsigned long patternStartTime = 0;
 
 // Cross-fade state
@@ -916,9 +950,18 @@ uint8_t fadeFromPattern = 0;
 unsigned long fadeStartTime = 0;
 CRGB ledsOld[NUM_LEDS];
 
+// Next pattern after 'from' that's allowed in the current mode
+int nextAllowedPattern(int from) {
+  for (int i = 1; i <= NUM_PATTERNS; i++) {
+    int p = (from + i) % NUM_PATTERNS;
+    if (!bwMode || patternList[p].bw) return p;
+  }
+  return from;
+}
+
 void nextPattern() {
   fadeFromPattern = currentPattern;
-  currentPattern = (currentPattern + 1) % NUM_PATTERNS;
+  currentPattern = nextAllowedPattern(currentPattern);
   patternStartTime = millis();
   saveSettings();
   needsReset = true;
@@ -959,6 +1002,7 @@ void saveSettings() {
   prefs.begin("jlstate", false);
   prefs.putUChar("bright", brightnessIndex);
   prefs.putUChar("speed", speedIndex);
+  prefs.putBool("bw", bwMode);
   prefs.putString("pattern", patternList[currentPattern].name);
   prefs.end();
 }
@@ -967,6 +1011,7 @@ void loadSettings() {
   prefs.begin("jlstate", true);
   brightnessIndex = min((int)prefs.getUChar("bright", brightnessIndex), (int)NUM_BRIGHTNESS_LEVELS - 1);
   speedIndex = min((int)prefs.getUChar("speed", speedIndex), (int)NUM_SPEED_LEVELS - 1);
+  bwMode = prefs.getBool("bw", false);
   String name = prefs.getString("pattern", "");
   prefs.end();
 
@@ -974,6 +1019,7 @@ void loadSettings() {
   for (int i = 0; i < NUM_PATTERNS; i++) {
     if (name == patternList[i].name) currentPattern = i;
   }
+  if (bwMode && !patternList[currentPattern].bw) currentPattern = nextAllowedPattern(currentPattern);
 }
 
 // ===== OFF (DEEP SLEEP) =====
@@ -1064,11 +1110,11 @@ void updateDisplay() {
     return;
   }
 
-  M5.Display.fillScreen(NAVY);
+  M5.Display.fillScreen(bwMode ? BLACK : NAVY);
   M5.Display.setTextColor(WHITE);
 
   M5.Display.setTextSize(2);
-  M5.Display.drawString("Jasper Lights", 10, 6);
+  M5.Display.drawString(bwMode ? "Jasper B&W" : "Jasper Lights", 10, 6);
   M5.Display.setTextColor(autoMode ? GREEN : ORANGE);
   M5.Display.drawString(autoMode ? "AUTO" : "MAN", autoMode ? 182 : 194, 6);
 
@@ -1088,7 +1134,7 @@ void updateDisplay() {
   }
 
   M5.Display.setTextSize(1);
-  M5.Display.drawString("A:1.5s=auto 3.5s=off B:bri PWR:spd", 10, 110);
+  M5.Display.drawString("A hold:1.5s auto 3.5s off PWR hold:B&W", 4, 110);
   M5.Display.drawString("v" VERSION " by zatar", 10, 122);
 }
 
@@ -1101,6 +1147,13 @@ void setSpeed(int index) {
 
 void nextSpeed() {
   setSpeed((speedIndex + 1) % NUM_SPEED_LEVELS);
+}
+
+void toggleBwMode() {
+  bwMode = !bwMode;
+  Serial.printf("B&W mode %s\n", bwMode ? "on" : "off");
+  if (bwMode && !patternList[currentPattern].bw) nextPattern();  // Also saves
+  else saveSettings();
 }
 
 void nextBrightness() {
@@ -1361,6 +1414,7 @@ void printHelp() {
 }
 
 void handleCommand(char *cmd) {
+  lastActivityTime = millis();
   while (*cmd == ' ') cmd++;
   int a, b;
 
@@ -1486,6 +1540,8 @@ void setup() {
   initOutput();
   patternStartTime = millis();
   M5.BtnA.setHoldThresh(AUTO_PRESS_MS);
+  M5.BtnPWR.setHoldThresh(BW_PRESS_MS);
+  lastActivityTime = millis();
 
   // After waking with A, wait for it to be released so that press isn't
   // taken as "next pattern"
@@ -1499,8 +1555,8 @@ void setup() {
 
   updateDisplay();
   Serial.println("Jasper Lights v" VERSION " ready! A: next pattern (hold 1.5 s: auto, 3.5 s: off), B: brightness, PWR: speed");
-  Serial.printf("%s mode, starting with %s, brightness %d/%d, speed %d/%d\n",
-                autoMode ? "Auto" : "Manual", patternList[currentPattern].name,
+  Serial.printf("%s mode%s, starting with %s, brightness %d/%d, speed %d/%d\n",
+                autoMode ? "Auto" : "Manual", bwMode ? " (B&W)" : "", patternList[currentPattern].name,
                 brightnessIndex + 1, NUM_BRIGHTNESS_LEVELS, speedIndex + 1, NUM_SPEED_LEVELS);
   printHelp();
 }
@@ -1570,10 +1626,24 @@ void loop() {
     nextBrightness();
     updateDisplay();
   }
-  // Power button (left side). A short press is safe; holding it ~6 s powers off.
+  // Power button (left side): click = speed, hold 1 s = B&W mode. Holding it
+  // ~6 s still powers the M5 off in hardware.
   if (M5.BtnPWR.wasClicked()) {
     nextSpeed();
     updateDisplay();
+  }
+  if (M5.BtnPWR.wasHold()) {
+    toggleBwMode();
+    updateDisplay();
+  }
+
+  // Any button press counts as activity; auto-off after an hour without any
+  if (M5.BtnA.wasPressed() || M5.BtnB.wasPressed() || M5.BtnPWR.wasPressed()) {
+    lastActivityTime = millis();
+  }
+  if (millis() - lastActivityTime >= AUTO_OFF_MS) {
+    Serial.println("Auto-off after an hour without button presses");
+    turnOff();  // Doesn't return
   }
 
   if (tuning) renderTune();

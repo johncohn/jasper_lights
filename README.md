@@ -4,6 +4,8 @@ LED controller for an M5StickC Plus2 driving a 200-LED WS2811 strand wrapped aro
 
 ## Use
 
+Short version for everyday use: [USER_GUIDE.md](USER_GUIDE.md).
+
 The lights start in **auto mode**: a new pattern every minute (`AUTO_PATTERN_MS`), always in the same order (numbered on the screen). Patterns cross-fade over 1.5 s.
 
 - **A button** (big front M5 button) does everything important:
@@ -12,11 +14,13 @@ The lights start in **auto mode**: a new pattern every minute (`AUTO_PATTERN_MS`
   - **Hold 3.5 s**: turn **off** (LEDs dark, screen off, ESP32 in deep sleep). The screen tells you what releasing will do.
   - **Press while off**: turn back on.
 - **B button** (right side): cycle through 6 brightness levels (4, 8, 15, 25, 40, 60), then back to the lowest. Starts at level 4 (25).
-- **Power button** (left side, short press): cycle through 6 speed levels: 0.4x, 1x, 2x, 3.5x, 6x, 10x. Starts at level 2 (1x, the speed the patterns were designed at). Every pattern scales its motion by this, except the cross-fade and Map Check. Holding the power button ~6 s still turns the M5 off.
+- **Power button** (left side): **hold 1 s** to toggle **black & white mode** (only the B&W patterns, in auto and manual; the screen turns black and says *Jasper B&W*). Short press: cycle through 6 speed levels: 0.4x, 1x, 2x, 3.5x, 6x, 10x. Starts at level 2 (1x, the speed the patterns were designed at). Every pattern scales its motion by this, except the cross-fade and Map Check. Holding the power button ~6 s still turns the M5 off.
 
 The screen shows the current pattern, and brightness and speed as rows of boxes.
 
-Brightness, speed and the current pattern are saved in flash whenever they change and restored at power-up or when turned back on. It always starts in auto mode.
+It **turns itself off after an hour** without button presses or serial commands (`AUTO_OFF_MS`).
+
+Brightness, speed, B&W mode and the current pattern are saved in flash whenever they change and restored at power-up or when turned back on. It always starts in auto mode.
 
 "Off" keeps the M5's power-hold pin on during deep sleep, so the M5 wakes with the A button instead of needing the power button. The Plus2 can't switch off its 5V output in software, so the LED strip stays powered (dark) while off and its idle current is the main battery drain.
 
@@ -52,7 +56,7 @@ Each time a pattern is selected it picks new random speed, direction and spacing
 
 ### Smooth fades
 
-The LEDs only have 256 steps per color, and at low brightness only a couple of dozen of those are used, so fades can stair-step. Patterns write 0-255 values on a perceptual scale into `leds[]`, and `showLeds()` turns them into light at 16-bit precision (smooth gamma curve, color correction, brightness level) before rounding to the LED's steps. Rounding uses spatial dithering: each LED has its own fixed threshold (evenly spread, in random order along the strand), so at a value of 3.4 steps about 40% of the LEDs show 4 and the rest show 3. In a fade, LEDs step up one at a time instead of all together, so large areas brighten smoothly, and since each LED changes only once per step nothing flickers. `HYSTERESIS` keeps an LED from chattering if its value hovers at its threshold. (Time-based dithering was tried and dropped: it made dim pixels flicker.) Type `fps` in the serial monitor to see the strip refresh rate.
+The LEDs only have 256 steps per color, and at low brightness only a couple of dozen of those are used, so fades can stair-step. Patterns write 0-255 values on a perceptual scale into `leds[]`, and `showLeds()` turns them into light at 16-bit precision (smooth gamma curve, color correction, brightness level) before rounding to the LED's steps. Rounding uses spatial dithering: each LED has its own fixed threshold (evenly spread, in random order along the strand), so at a value of 3.4 steps about 40% of the LEDs show 4 and the rest show 3. In a fade, LEDs step up one at a time instead of all together, so large areas brighten smoothly, and since each LED changes only once per step nothing flickers. `HYSTERESIS` keeps an LED from chattering if its value hovers at its threshold. Only each LED's brightest channel is rounded this way; the other two are set in proportion, so all three step together and fading whites don't flash red or blue at their edges. Color correction fades in from none at the lowest step to full at `FULL_CORRECTION_LEVEL` (8), because at the bottom few steps it can't be represented and just tints whites lavender. (Time-based dithering was tried and dropped: it made dim pixels flicker.) Type `fps` in the serial monitor to see the strip refresh rate.
 
 Moving patterns (White Comet, Falling Rings, Map Check) also track positions in 1/16ths of an LED and fade each LED in just ahead of the moving edge, so motion glides between LEDs instead of stepping.
 
