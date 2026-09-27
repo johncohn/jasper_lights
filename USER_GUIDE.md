@@ -2,11 +2,13 @@
 
 ## Buttons
 
+Hold the M5 with the screen facing you and the writing upright. The big button under the screen is the **M5 button**; the two side buttons are **Top** and **Bottom**.
+
 | Button | Press | Hold |
 |---|---|---|
 | **M5** (big front button) | Next pattern (switches to manual) | **1.5 s**: back to auto · **3.5 s**: turn off |
-| **B** (right side) | Brightness (6 levels, wraps around) | – |
-| **Power** (left side) | Speed (6 levels, wraps around) | **1 s**: black & white mode on/off |
+| **Top** | Brightness (6 levels, wraps around) | – |
+| **Bottom** | Speed (6 levels, wraps around) | **1 s**: black & white mode on/off |
 
 While you hold the M5 button, the screen tells you what letting go will do.
 
@@ -22,7 +24,7 @@ While you hold the M5 button, the screen tells you what letting go will do.
 - **Auto-off**: after an hour with no button presses it turns off by itself.
 - **On**: press the M5 button.
 
-Don't hold the power button for 6 s or more: that switches the M5 off completely, and it has to be switched on again with the power button.
+Don't hold the Bottom button for 6 s or more: it is also the M5's power switch, so that turns the M5 off completely, and it has to be switched on again with the Bottom button.
 
 ## Screen
 

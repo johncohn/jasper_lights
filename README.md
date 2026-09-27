@@ -13,8 +13,8 @@ The lights start in **auto mode**: a new pattern every minute (`AUTO_PATTERN_MS`
   - **Hold 1.5 s** and release: back to auto mode.
   - **Hold 3.5 s**: turn **off** (LEDs dark, screen off, ESP32 in deep sleep). The screen tells you what releasing will do.
   - **Press while off**: turn back on.
-- **B button** (right side): cycle through 6 brightness levels (4, 8, 15, 25, 40, 60), then back to the lowest. Starts at level 4 (25).
-- **Power button** (left side): **hold 1 s** to toggle **black & white mode** (only the B&W patterns, in auto and manual; the screen turns black and says *Jasper B&W*). Short press: cycle through 6 speed levels: 0.4x, 1x, 2x, 3.5x, 6x, 10x. Starts at level 2 (1x, the speed the patterns were designed at). Every pattern scales its motion by this, except the cross-fade and Map Check. Holding the power button ~6 s still turns the M5 off.
+- **Top button** (side button nearest the top, holding the M5 with the screen facing you and the writing upright): cycle through 6 brightness levels (4, 8, 15, 25, 40, 60), then back to the lowest. Starts at level 4 (25).
+- **Bottom button** (the other side button; also the M5's power button): **hold 1 s** to toggle **black & white mode** (only the B&W patterns, in auto and manual; the screen turns black and says *Jasper B&W*). Short press: cycle through 6 speed levels: 0.4x, 1x, 2x, 3.5x, 6x, 10x. Starts at level 2 (1x, the speed the patterns were designed at). Every pattern scales its motion by this, except the cross-fade and Map Check. Holding it ~6 s still turns the M5 off in hardware.
 
 The screen shows the current pattern, and brightness and speed as rows of boxes.
 
@@ -22,7 +22,7 @@ It **turns itself off after an hour** without button presses or serial commands 
 
 Brightness, speed, B&W mode and the current pattern are saved in flash whenever they change and restored at power-up or when turned back on. It always starts in auto mode.
 
-"Off" keeps the M5's power-hold pin on during deep sleep, so the M5 wakes with the A button instead of needing the power button. The Plus2 can't switch off its 5V output in software, so the LED strip stays powered (dark) while off and its idle current is the main battery drain.
+"Off" keeps the M5's power-hold pin on during deep sleep, so the M5 wakes with the A button instead of needing the Bottom (power) button. The Plus2 can't switch off its 5V output in software, so the LED strip stays powered (dark) while off and its idle current is the main battery drain.
 
 ## Patterns
 

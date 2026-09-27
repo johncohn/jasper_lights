@@ -8,8 +8,8 @@
 /// A button (big front button): next pattern, switching to manual mode (patterns
 ///   cross-fade); hold 1.5 s to go back to auto mode; hold 3.5 s to turn off (deep sleep),
 ///   press again to turn on
-/// B button (side button): cycle through 6 brightness levels
-/// Power button (left side): cycle through 6 speed levels; hold 1 s to toggle
+/// Top side button (B): cycle through 6 brightness levels
+/// Bottom side button (power button): cycle through 6 speed levels; hold 1 s to toggle
 ///   black & white mode (only B&W patterns)
 /// Turns itself off after an hour without button presses
 ///
@@ -64,14 +64,14 @@
 #define FADE_DURATION_MS 1500  // Cross-fade time between patterns
 #define FRAME_MS 16            // ~60 FPS
 
-// Brightness levels cycled by the B button. 25 was the m5lights_v1 default,
+// Brightness levels cycled by the top button (B). 25 was the m5lights_v1 default,
 // chosen for M5Stick 5V power stability -- the top levels draw a lot more
 // current, especially on the all-white patterns.
 const uint8_t brightnessLevels[] = { 4, 8, 15, 25, 40, 60 };
 #define NUM_BRIGHTNESS_LEVELS (sizeof(brightnessLevels) / sizeof(brightnessLevels[0]))
 uint8_t brightnessIndex = 3;  // Start at 25
 
-// Speed levels cycled by the power button, in 1/16ths: 0.4x, 1x, 2x, 3.5x, 6x, 10x.
+// Speed levels cycled by the bottom (power) button, in 1/16ths: 0.4x, 1x, 2x, 3.5x, 6x, 10x.
 // Level 2 (1x) is the speed the patterns were designed at.
 const uint8_t speedLevels[] = { 6, 16, 32, 56, 96, 160 };
 #define NUM_SPEED_LEVELS (sizeof(speedLevels) / sizeof(speedLevels[0]))
@@ -936,7 +936,7 @@ bool needsReset = true;  // Next render of currentPattern starts fresh
 // switches to manual (A steps through patterns); a long press goes back to auto.
 #define AUTO_PATTERN_MS 60000
 #define AUTO_OFF_MS (60UL * 60 * 1000)  // Turn off after an hour with no button presses
-#define BW_PRESS_MS 1000   // Hold the power button this long to toggle B&W mode
+#define BW_PRESS_MS 1000   // Hold the bottom (power) button this long to toggle B&W mode
 #define AUTO_PRESS_MS 1500  // Hold A this long (and release) to go back to auto mode
 #define OFF_PRESS_MS 3500   // Hold A this long to turn off; press A again to turn on
 bool autoMode = true;
@@ -1134,7 +1134,7 @@ void updateDisplay() {
   }
 
   M5.Display.setTextSize(1);
-  M5.Display.drawString("A hold:1.5s auto 3.5s off PWR hold:B&W", 4, 110);
+  M5.Display.drawString("M5 hold 1.5s:auto 3.5s:off Bot hold:B&W", 4, 110);
   M5.Display.drawString("v" VERSION " by zatar", 10, 122);
 }
 
@@ -1554,7 +1554,7 @@ void setup() {
   }
 
   updateDisplay();
-  Serial.println("Jasper Lights v" VERSION " ready! A: next pattern (hold 1.5 s: auto, 3.5 s: off), B: brightness, PWR: speed");
+  Serial.println("Jasper Lights v" VERSION " ready! M5: next pattern (hold 1.5 s: auto, 3.5 s: off), top: brightness, bottom: speed (hold: B&W)");
   Serial.printf("%s mode%s, starting with %s, brightness %d/%d, speed %d/%d\n",
                 autoMode ? "Auto" : "Manual", bwMode ? " (B&W)" : "", patternList[currentPattern].name,
                 brightnessIndex + 1, NUM_BRIGHTNESS_LEVELS, speedIndex + 1, NUM_SPEED_LEVELS);
@@ -1626,7 +1626,7 @@ void loop() {
     nextBrightness();
     updateDisplay();
   }
-  // Power button (left side): click = speed, hold 1 s = B&W mode. Holding it
+  // Bottom (power) button: click = speed, hold 1 s = B&W mode. Holding it
   // ~6 s still powers the M5 off in hardware.
   if (M5.BtnPWR.wasClicked()) {
     nextSpeed();
