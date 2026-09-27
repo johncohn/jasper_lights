@@ -4,7 +4,7 @@ LED controller for an M5StickC Plus2 driving a 200-LED WS2811 strand wrapped aro
 
 ## Use
 
-The lights start in **auto mode**: a new pattern every minute (`AUTO_PATTERN_MS`), in shuffled order. Every pattern plays once before the order is reshuffled, and patterns cross-fade over 1.5 s.
+The lights start in **auto mode**: a new pattern every minute (`AUTO_PATTERN_MS`), always in the same order (numbered on the screen). Patterns cross-fade over 1.5 s.
 
 - **A button** (big front M5 button) does everything important:
   - **Short press**: next pattern, and switch to **manual mode** (the lights stay on the chosen pattern). The screen shows AUTO or MAN.
@@ -22,33 +22,39 @@ Brightness, speed and the current pattern are saved in flash whenever they chang
 
 ## Patterns
 
-| Name           | Description                                        |
-|----------------|----------------------------------------------------|
-| Solid          | Whole strand fades slowly through the rainbow      |
-| Rainbow        | Rotating rainbow across the strand                 |
-| Sine Chase     | One color in waves with dark gaps, moving along    |
-| B&W Stripes    | Wide black & white stripes drifting slowly         |
-| Starry Night   | White stars slowly fading in and out on black      |
-| White Comet    | 1-3 white comets with soft tails gliding on black  |
-| Breathe        | Whole strand gently breathing a soft pastel color  |
-| Pastel Twinkle | Soft pastel lights slowly fading in and out on black |
-| Falling Rings  | A ring of light slowly slides down all six strings at once and lands on the wooden ring (sometimes rises instead) |
-| Rising Rainbow | Rainbow from A to the ring, drifting slowly up all strings together |
-| Rainbow Spiral | Rainbow around the ring, twisting up the strings, slowly turning |
-| Slow Orbit     | One or two soft pastel glows circling the structure, lighting each string as they pass |
-| Ripples        | Soft pastel waves drifting down the strings; the ring glows as each arrives |
-| Cone Stripes   | Black & white: soft white bands drifting down (sometimes up) all strings; the ring glows as each arrives |
-| Pinwheel       | Black & white: every other string white, the white slowly rotating around |
-| B&W Spiral     | Black & white: stripes twisting down the strings like a barber pole, slowly turning |
-| Strings & Ring | Black & white: strings and ring slowly trade places, one white while the other is dark |
+| # | Name           | Description                                        |
+|---|----------------|----------------------------------------------------|
+| 1 | Solid          | Whole strand fades slowly through the rainbow      |
+| 2 | Cone Stripes   | Black & white: soft white bands drifting down (sometimes up) all strings; the ring glows as each arrives |
+| 3 | Rainbow Spiral | Rainbow around the ring, twisting up the strings, slowly turning |
+| 4 | Starry Night   | White stars slowly fading in and out on black      |
+| 5 | Falling Rings  | A ring of light slowly slides down all six strings at once and lands on the wooden ring (sometimes rises instead) |
+| 6 | Rainbow        | Rotating rainbow across the strand                 |
+| 7 | Pinwheel       | Black & white: every other string white, the white slowly rotating around |
+| 8 | Ripples        | Soft pastel waves drifting down the strings; the ring glows as each arrives |
+| 9 | White Comet    | 1-3 white comets with soft tails gliding slowly on black |
+| 10 | Rising Rainbow | Rainbow from A to the ring, drifting slowly up all strings together |
+| 11 | B&W Stripes    | Wide black & white stripes drifting slowly         |
+| 12 | Slow Orbit     | One or two soft pastel glows circling the structure, lighting each string as they pass |
+| 13 | Breathe        | Whole strand gently breathing a soft pastel color  |
+| 14 | B&W Spiral     | Black & white: stripes twisting down the strings like a barber pole, slowly turning |
+| 15 | Sine Chase     | One color in waves with dark gaps, moving along    |
+| 16 | Strings & Ring | Black & white: strings and ring slowly trade places, one white while the other is dark |
+| 17 | Pastel Twinkle | Soft pastel lights slowly fading in and out on black |
 
-The patterns from Falling Rings on use the structure map; the others treat the strand as one long line. The black & white ones (B&W Stripes, Starry Night, White Comet and the last four) are high contrast, which newborns see best.
+The order is `patternList[]` in the code.
+
+Cone Stripes, Rainbow Spiral, Falling Rings, Pinwheel, Ripples, Rising Rainbow, Slow Orbit, B&W Spiral and Strings & Ring use the structure map; the others treat the strand as one long line. The black & white ones are high contrast, which newborns see best.
 
 Test patterns for checking the map (**Segment Map**: each segment in a fixed color; **Map Check**: red/green/blue then white dots moving down all strings) are left out of the rotation. Set `INCLUDE_TEST_PATTERNS` to 1 at the pattern list to include them.
 
 Each time a pattern is selected it picks new random speed, direction and spacing.
 
-Moving patterns (White Comet, Falling Rings, Map Check) track positions in 1/16ths of an LED and fade each LED in just ahead of the moving edge, so motion glides between LEDs instead of stepping. At low brightness levels each LED has only a few distinct brightness steps, so the dimmest parts of fades can still look a little steppy.
+### Smooth fades
+
+The LEDs only have 256 steps per color, and at low brightness only a couple of dozen of those are used, so fades would visibly stair-step. To avoid that, patterns write 0-255 values on a perceptual scale into `leds[]`, and `showLeds()` turns them into light at 16-bit precision (smooth gamma curve, brightness level, color correction), then uses temporal dithering: the fraction left after rounding is carried per LED and channel into the next refresh, so a level of 3.4 shows as 3 most of the time and 4 some of the time. Animation advances at 60 fps, but the strip is refreshed as fast as it can take data (about 133 times a second; type `fps` in the serial monitor to check), which makes the dithering invisible.
+
+Moving patterns (White Comet, Falling Rings, Map Check) also track positions in 1/16ths of an LED and fade each LED in just ahead of the moving edge, so motion glides between LEDs instead of stepping.
 
 ## Structure map
 
@@ -78,7 +84,7 @@ Segment Map colors: strings A-1..A-6 are red, yellow, green, cyan, blue, magenta
 
 Changing a run's end also moves the next run's start if they were touching (and the same for start). When you finish, the map is saved to flash and printed as C code; paste it over `defaultRuns[]` to make it permanent. A saved map overrides `defaultRuns[]` until you type `reset`.
 
-Serial commands outside tuning: `speed N` (1-6), `tune`, `map` (print the current map as C code), `reset` (forget the saved map and use `defaultRuns[]`).
+Serial commands outside tuning: `speed N` (1-6), `fps` (strip refresh rate), `tune`, `map` (print the current map as C code), `reset` (forget the saved map and use `defaultRuns[]`).
 
 ### Checking the map
 
@@ -102,7 +108,7 @@ If you've lost track of which point is which, `show A-1`, `show A-2`, … find t
 
 ## Adding a pattern
 
-Write a `void myPattern(bool reset)` function that fills `leds[]` (and picks new parameters when `reset` is true). Advance its animation with `speedStep(step, carry)` rather than adding `step` directly, so it follows the speed setting; keep one `static int carry` per animated variable. Then add it to `gPatterns[]` and give it a name in `patternNames[]`.
+Write a `void myPattern(bool reset)` function that fills `leds[]` (and picks new parameters when `reset` is true). Advance its animation with `speedStep(step, carry)` rather than adding `step` directly, so it follows the speed setting; keep one `static int carry` per animated variable. Then add it, with its name, to `patternList[]`. Use `gammaRGB(r, g, b)` for colors (the gamma curve itself is applied in `showLeds()`).
 
 Structure patterns use `ledSeg[]`, `ledPos[]`, `ledDown[]` and `ledAngle[]` (see above). For example, `fallingRings()` lights each LED by its `ledDown[]`, so a band moves down all six strings at once and reaches the ring together.
 

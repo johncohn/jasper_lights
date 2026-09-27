@@ -1,10 +1,10 @@
 /// @file    jasper_lights.ino
 /// @brief   Simple M5StickC Plus2 LED blinker for Jasper
-/// @version 1.8.3
+/// @version 1.9.0
 /// @date    2026-09-26
 /// @author  John Cohn (patterns adapted from m5lights_v1 / Larry's patterns)
 ///
-/// Starts in auto mode: a new pattern every minute, in shuffled order.
+/// Starts in auto mode: a new pattern every minute, in a fixed order.
 /// A button (big front button): next pattern, switching to manual mode (patterns
 ///   cross-fade); hold 1.5 s to go back to auto mode; hold 3.5 s to turn off (deep sleep),
 ///   press again to turn on
@@ -12,6 +12,8 @@
 /// Power button (left side): cycle through 6 speed levels
 ///
 /// @changelog
+/// v1.9.0 - Smooth fades: 16-bit gamma and brightness with temporal dithering at
+///          ~150 Hz; fixed pattern order (numbered on screen); slower White Comet
 /// v1.8.3 - Always start in auto mode, at power-up too
 /// v1.8.2 - Shorter A holds: 1.5 s for auto mode, 3.5 s for off
 /// v1.8.1 - Turning back on with A always starts in auto mode
@@ -43,7 +45,7 @@
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
 
-#define VERSION "1.8.3"
+#define VERSION "1.9.0"
 
 // Hardware config
 #define LED_PIN 32
@@ -84,29 +86,59 @@ int wrapAdd(int v, int d, int m) {
 CRGB leds[NUM_LEDS];
 Preferences prefs;  // Flash storage for the LED map and saved settings
 
-// ===== GAMMA CORRECTION =====
-// Extends black range (0-41 -> pure black) for dramatic dark gaps and rich colors
-const byte gammaTable[256] = {
-    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  1,  1,  1,  1,  2,  2,
-    3,  3,  4,  4,  4,  4,  5,  5,  5,  5,  6,  6,  6,  7,  7,  7,
-    8,  8,  8,  9,  9,  9, 10, 10, 11, 11, 11, 12, 12, 13, 13, 14,
-   14, 15, 15, 16, 16, 17, 17, 18, 18, 19, 19, 20, 20, 21, 22, 22,
-   23, 23, 24, 25, 25, 26, 26, 27, 28, 28, 29, 30, 30, 31, 32, 33,
-   33, 34, 35, 35, 36, 37, 38, 38, 39, 40, 41, 42, 42, 43, 44, 45,
-   46, 47, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 56, 57, 58, 59,
-   60, 61, 62, 63, 64, 65, 66, 67, 68, 70, 71, 72, 73, 74, 75, 76,
-   77, 78, 79, 81, 82, 83, 84, 85, 86, 88, 89, 90, 91, 92, 94, 95,
-   96, 97, 99,100,101,102,104,105,106,108,109,110,112,113,114,116,
-  117,119,120,121,123,124,126,127,129,130,132,133,135,136,138,139,
-  141,142,144,145,147,149,150,152,153,155,157,158,160,162,163,165,
-  167,168,170,172,174,175,177,179,181,182,184,186,188,190,192,193,
-  195,197,199,201,203,205,207,209,211,213,215,217,219,221,223,225
-};
+// ===== OUTPUT: GAMMA, BRIGHTNESS AND DITHERING =====
+// Patterns write 0-255 values into leds[] on a perceptual scale. showLeds() turns
+// them into light: a smooth gamma curve and the brightness level are applied at
+// 16-bit precision, then temporal dithering spreads the fraction left over after
+// rounding across refreshes (e.g. 3.4 shows as 3 most of the time and 4 some of
+// the time). The strip is refreshed as fast as it can go (~150 Hz), so at low
+// brightness fades ramp smoothly instead of stepping between the few levels the
+// LEDs have.
+CRGB outLeds[NUM_LEDS];                // What is actually sent to the strip
+uint16_t gamma16[256];                 // Pattern value -> light, 0..65535
+uint8_t ditherErr[NUM_LEDS][3];        // Leftover fraction per LED and channel
+const uint8_t colorCorrection[3] = { 255, 176, 240 };  // FastLED's TypicalLEDStrip
 
+void initOutput() {
+  // Values up to 14 are black (dark gaps in the waves); above that a 2.15 power
+  // curve, topping out at 225/255 like the original 8-bit gamma table
+  for (int x = 0; x < 256; x++) {
+    float f = (x <= 14) ? 0.0f : powf((x - 14) / 241.0f, 2.15f);
+    gamma16[x] = (uint16_t)(f * (225.0f / 255.0f) * 65535.0f + 0.5f);
+  }
+  // Random starting fractions, so LEDs showing the same value don't all step
+  // up and down in unison
+  for (int i = 0; i < NUM_LEDS; i++) {
+    for (int c = 0; c < 3; c++) ditherErr[i][c] = random(256);
+  }
+}
+
+uint32_t showCount = 0;  // Strip refreshes, for the "fps" serial command
+uint32_t fpsStartCount = 0;
+unsigned long fpsStartTime = 0;  // 0 = not measuring
+
+void showLeds() {
+  showCount++;
+  if (fpsStartTime && millis() - fpsStartTime >= 1000) {
+    Serial.printf("Strip refreshes per second: %lu\n", (unsigned long)(showCount - fpsStartCount));
+    fpsStartTime = 0;
+  }
+  uint32_t bright = brightnessLevels[brightnessIndex];
+  for (int i = 0; i < NUM_LEDS; i++) {
+    for (int c = 0; c < 3; c++) {
+      // Light in 1/256ths of an output step
+      uint32_t v = (uint32_t)gamma16[leds[i][c]] * colorCorrection[c] / 255 * bright / 255;
+      uint32_t total = v + ditherErr[i][c];
+      outLeds[i][c] = total >> 8;
+      ditherErr[i][c] = total & 255;
+    }
+  }
+  FastLED.show();
+}
+
+// Patterns call this to set a color; gamma is applied later, in showLeds()
 CRGB gammaRGB(byte r, byte g, byte b) {
-  return CRGB(gammaTable[r], gammaTable[g], gammaTable[b]);
+  return CRGB(r, g, b);
 }
 
 // ===== FIXED-POINT MATH =====
@@ -446,7 +478,7 @@ void whiteComet(bool reset) {
   if (reset) {
     numComets = 1 + random(3);
     tailLength = 15 + random(20);
-    speed = 6 + random(6);
+    speed = 1 + random(2);  // ~4-8 LEDs per second at 1x
     if (random(2) == 0) speed = -speed;
     position = 0;
   }
@@ -788,7 +820,7 @@ void mapCheck(bool reset) {
   unsigned long t = (millis() - startTime) % 20000;
 
   if (t < 6000) {
-    CRGB c = (t < 2000) ? CRGB::Red : (t < 4000) ? CRGB::Green : CRGB::Blue;
+    CRGB c = (t < 2000) ? CRGB(255, 0, 0) : (t < 4000) ? CRGB(0, 255, 0) : CRGB(0, 0, 255);
     for (int i = 0; i < NUM_LEDS; i++) leds[i] = (ledSeg[i] == SEG_NONE) ? CRGB::Black : c;
     return;
   }
@@ -812,33 +844,44 @@ void mapCheck(bool reset) {
 
 // ===== PATTERN LIST =====
 // To add a pattern: write a function like the ones above, then add it here
-// and give it a name in patternNames[]. Patterns play in a shuffled order.
+// with its name. Patterns play in this order.
 
 // Set to 1 to include the map test patterns (Segment Map, Map Check) in the rotation
 #define INCLUDE_TEST_PATTERNS 0
 
 typedef void (*Pattern)(bool reset);
-Pattern gPatterns[] = {
-  solidColor, rainbow, sineWaveChase,
-  bwStripes, starryNight, whiteComet, breathe, pastelTwinkle,
-  fallingRings, risingRainbow, rainbowSpiral, slowOrbit, ripples,
-  coneStripes, pinwheel, bwSpiral, stringsAndRing,
-#if INCLUDE_TEST_PATTERNS
-  segmentMap, mapCheck,
-#endif
+struct PatternEntry {
+  Pattern fn;
+  const char* name;
 };
-const char* patternNames[] = {
-  "Solid", "Rainbow", "Sine Chase",
-  "B&W Stripes", "Starry Night", "White Comet", "Breathe", "Pastel Twinkle",
-  "Falling Rings", "Rising Rainbow", "Rainbow Spiral", "Slow Orbit", "Ripples",
-  "Cone Stripes", "Pinwheel", "B&W Spiral", "Strings & Ring",
+
+// Fixed play order, mixing color, black & white, and structure patterns
+const PatternEntry patternList[] = {
+  { solidColor,     "Solid" },
+  { coneStripes,    "Cone Stripes" },
+  { rainbowSpiral,  "Rainbow Spiral" },
+  { starryNight,    "Starry Night" },
+  { fallingRings,   "Falling Rings" },
+  { rainbow,        "Rainbow" },
+  { pinwheel,       "Pinwheel" },
+  { ripples,        "Ripples" },
+  { whiteComet,     "White Comet" },
+  { risingRainbow,  "Rising Rainbow" },
+  { bwStripes,      "B&W Stripes" },
+  { slowOrbit,      "Slow Orbit" },
+  { breathe,        "Breathe" },
+  { bwSpiral,       "B&W Spiral" },
+  { sineWaveChase,  "Sine Chase" },
+  { stringsAndRing, "Strings & Ring" },
+  { pastelTwinkle,  "Pastel Twinkle" },
 #if INCLUDE_TEST_PATTERNS
-  "Segment Map", "Map Check",
+  { segmentMap,     "Segment Map" },
+  { mapCheck,       "Map Check" },
 #endif
 };
 
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
-#define NUM_PATTERNS ARRAY_SIZE(gPatterns)
+#define NUM_PATTERNS ARRAY_SIZE(patternList)
 
 uint8_t currentPattern = 0;
 bool needsReset = true;  // Next render of currentPattern starts fresh
@@ -851,23 +894,6 @@ bool needsReset = true;  // Next render of currentPattern starts fresh
 bool autoMode = true;
 unsigned long patternStartTime = 0;
 
-// Shuffled play order; reshuffled each time through, never repeating a pattern
-// back to back
-uint8_t playOrder[NUM_PATTERNS];
-uint8_t playPos = 0;
-
-void shufflePlayOrder() {
-  for (int i = 0; i < NUM_PATTERNS; i++) playOrder[i] = i;
-  for (int i = NUM_PATTERNS - 1; i > 0; i--) {
-    int j = random(i + 1);
-    uint8_t t = playOrder[i]; playOrder[i] = playOrder[j]; playOrder[j] = t;
-  }
-  if (NUM_PATTERNS > 1 && playOrder[0] == currentPattern) {
-    uint8_t t = playOrder[0]; playOrder[0] = playOrder[1]; playOrder[1] = t;
-  }
-  playPos = 0;
-}
-
 // Cross-fade state
 bool isFading = false;
 uint8_t fadeFromPattern = 0;
@@ -876,14 +902,13 @@ CRGB ledsOld[NUM_LEDS];
 
 void nextPattern() {
   fadeFromPattern = currentPattern;
-  if (++playPos >= NUM_PATTERNS) shufflePlayOrder();
-  currentPattern = playOrder[playPos];
+  currentPattern = (currentPattern + 1) % NUM_PATTERNS;
   patternStartTime = millis();
   saveSettings();
   needsReset = true;
   isFading = true;
   fadeStartTime = millis();
-  Serial.printf("Pattern -> %d: %s\n", currentPattern, patternNames[currentPattern]);
+  Serial.printf("Pattern -> %d: %s\n", currentPattern, patternList[currentPattern].name);
 }
 
 void renderPattern() {
@@ -893,9 +918,9 @@ void renderPattern() {
       isFading = false;
     } else {
       // Render the outgoing pattern, save it, then render the incoming one and blend
-      gPatterns[fadeFromPattern](false);
+      patternList[fadeFromPattern].fn(false);
       for (int i = 0; i < NUM_LEDS; i++) ledsOld[i] = leds[i];
-      gPatterns[currentPattern](needsReset);
+      patternList[currentPattern].fn(needsReset);
       needsReset = false;
 
       fract8 amount = (elapsed * 255) / FADE_DURATION_MS;
@@ -906,7 +931,7 @@ void renderPattern() {
     }
   }
 
-  gPatterns[currentPattern](needsReset);
+  patternList[currentPattern].fn(needsReset);
   needsReset = false;
 }
 
@@ -918,7 +943,7 @@ void saveSettings() {
   prefs.begin("jlstate", false);
   prefs.putUChar("bright", brightnessIndex);
   prefs.putUChar("speed", speedIndex);
-  prefs.putString("pattern", patternNames[currentPattern]);
+  prefs.putString("pattern", patternList[currentPattern].name);
   prefs.end();
 }
 
@@ -929,14 +954,10 @@ void loadSettings() {
   String name = prefs.getString("pattern", "");
   prefs.end();
 
-  // Start the shuffled order with the saved pattern
+  currentPattern = 0;
   for (int i = 0; i < NUM_PATTERNS; i++) {
-    if (name == patternNames[playOrder[i]]) {
-      uint8_t t = playOrder[0]; playOrder[0] = playOrder[i]; playOrder[i] = t;
-      break;
-    }
+    if (name == patternList[i].name) currentPattern = i;
   }
-  currentPattern = playOrder[0];
 }
 
 // ===== OFF (DEEP SLEEP) =====
@@ -956,7 +977,7 @@ void waitForRelease() {
 
 void turnOff() {
   saveSettings();
-  fill_solid(leds, NUM_LEDS, CRGB::Black);
+  fill_solid(outLeds, NUM_LEDS, CRGB::Black);
   FastLED.show();
   M5.Display.setBrightness(0);
   M5.Display.sleep();
@@ -1036,7 +1057,7 @@ void updateDisplay() {
   M5.Display.drawString(autoMode ? "AUTO" : "MAN", autoMode ? 182 : 194, 6);
 
   M5.Display.setTextColor(YELLOW);
-  M5.Display.drawString(patternNames[currentPattern], 10, 34);
+  M5.Display.drawString(String(currentPattern + 1) + " " + patternList[currentPattern].name, 10, 34);
 
   // Brightness and speed: label plus one box per level, filled up to the current level
   M5.Display.setTextColor(WHITE);
@@ -1068,7 +1089,6 @@ void nextSpeed() {
 
 void nextBrightness() {
   brightnessIndex = (brightnessIndex + 1) % NUM_BRIGHTNESS_LEVELS;
-  FastLED.setBrightness(brightnessLevels[brightnessIndex]);
   saveSettings();
   Serial.printf("Brightness -> %d/%d (%d)\n", brightnessIndex + 1, NUM_BRIGHTNESS_LEVELS,
                 brightnessLevels[brightnessIndex]);
@@ -1198,7 +1218,7 @@ void renderTune() {
     leds[i] = (ledSeg[i] == SEG_NONE) ? CRGB::Black : segmentColor(ledSeg[i], 130);
   }
   for (int i = runs[tuneRun].start; i <= runs[tuneRun].end; i++) leds[i] = CRGB::White;
-  leds[runs[tuneRun].start] = CRGB::Green;
+  leds[runs[tuneRun].start] = CRGB(0, 255, 0);
   leds[runs[tuneRun].end] = CRGB::Red;
 }
 
@@ -1310,7 +1330,7 @@ void renderShow() {
     bool flip;
     segmentFor(runs[r].from, runs[r].to, flip);
     for (int i = runs[r].start; i <= runs[r].end; i++) leds[i] = CRGB::White;
-    leds[flip ? runs[r].end : runs[r].start] = CRGB::Green;
+    leds[flip ? runs[r].end : runs[r].start] = CRGB(0, 255, 0);
     leds[flip ? runs[r].start : runs[r].end] = CRGB::Red;
   }
 }
@@ -1333,6 +1353,10 @@ void handleCommand(char *cmd) {
     else if (strcasecmp(cmd, "map") == 0) printRuns();
     else if (strcasecmp(cmd, "reset") == 0) resetRuns();
     else if (strcasecmp(cmd, "off") == 0) stopShow();
+    else if (strcasecmp(cmd, "fps") == 0) {
+      fpsStartCount = showCount;
+      fpsStartTime = millis();
+    }
     else if (sscanf(cmd, "speed %d", &a) == 1) {
       if (a < 1 || a > (int)NUM_SPEED_LEVELS) Serial.printf("  ?? Speed should be 1-%d\n", NUM_SPEED_LEVELS);
       else setSpeed(a - 1);
@@ -1432,17 +1456,18 @@ void setup() {
 
   Serial.begin(115200);
 
-  FastLED.addLeds<CHIPSET, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
-  FastLED.setBrightness(brightnessLevels[brightnessIndex]);
-  fill_solid(leds, NUM_LEDS, CRGB::Black);
+  // Gamma, brightness, color correction and dithering are all done in showLeds()
+  FastLED.addLeds<CHIPSET, LED_PIN, COLOR_ORDER>(outLeds, NUM_LEDS);
+  FastLED.setBrightness(255);
+  FastLED.setDither(DISABLE_DITHER);
+  fill_solid(outLeds, NUM_LEDS, CRGB::Black);
   FastLED.show();
 
   randomSeed(esp_random());
   loadRuns();
 
-  shufflePlayOrder();
   loadSettings();
-  FastLED.setBrightness(brightnessLevels[brightnessIndex]);
+  initOutput();
   patternStartTime = millis();
   M5.BtnA.setHoldThresh(AUTO_PRESS_MS);
 
@@ -1459,16 +1484,22 @@ void setup() {
   updateDisplay();
   Serial.println("Jasper Lights v" VERSION " ready! A: next pattern (hold 1.5 s: auto, 3.5 s: off), B: brightness, PWR: speed");
   Serial.printf("%s mode, starting with %s, brightness %d/%d, speed %d/%d\n",
-                autoMode ? "Auto" : "Manual", patternNames[currentPattern],
+                autoMode ? "Auto" : "Manual", patternList[currentPattern].name,
                 brightnessIndex + 1, NUM_BRIGHTNESS_LEVELS, speedIndex + 1, NUM_SPEED_LEVELS);
   printHelp();
 }
 
 void loop() {
+  // Animation advances at FRAME_MS; the strip is refreshed every pass (as fast
+  // as it can take data) so the dithering in showLeds() can smooth the fades
   static unsigned long lastFrameTime = 0;
   unsigned long now = millis();
-  if (now - lastFrameTime < FRAME_MS) return;
-  lastFrameTime = now;
+  if (now - lastFrameTime < FRAME_MS) {
+    showLeds();
+    return;
+  }
+  // Keep an even frame rate; resync if we fall far behind
+  lastFrameTime = (now - lastFrameTime > 4 * FRAME_MS) ? now : lastFrameTime + FRAME_MS;
 
   handleSerial();
 
@@ -1512,7 +1543,7 @@ void loop() {
   }
   if (holdStage == 2) {  // About to turn off: go dark now
     fill_solid(leds, NUM_LEDS, CRGB::Black);
-    FastLED.show();
+    showLeds();
     return;
   }
   if (autoMode && !tuning && !SHOWING && millis() - patternStartTime >= AUTO_PATTERN_MS) {
@@ -1532,5 +1563,5 @@ void loop() {
   if (tuning) renderTune();
   else if (SHOWING) renderShow();
   else renderPattern();
-  FastLED.show();
+  showLeds();
 }
