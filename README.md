@@ -97,7 +97,7 @@ Segment Map colors: strings A-1..A-6 are red, yellow, green, cyan, blue, magenta
 
 Changing a run's end also moves the next run's start if they were touching (and the same for start). When you finish, the map is saved to flash and printed as C code; paste it over `defaultRuns[]` to make it permanent. A saved map overrides `defaultRuns[]` until you type `reset`.
 
-Serial commands outside tuning: the remote commands above (`speed N`, `bright +`, …), `wifi`, `fps` (strip refresh rate), `tune`, `map` (print the current map as C code), `reset` (forget the saved map and use `defaultRuns[]`).
+Serial commands outside tuning: the controls under [Serial control](#serial-control) (`next`, `speed N`, `bright +`, …), `fps` (strip refresh rate), `tune`, `map` (print the current map as C code), `reset` (forget the saved map and use `defaultRuns[]`).
 
 ### Checking the map
 

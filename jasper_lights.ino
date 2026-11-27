@@ -15,10 +15,12 @@
 ///   turned off (secrets.h.off) because WiFi made the LEDs glitch.
 ///
 /// @changelog
-/// v1.11.0 - A press skips to the next pattern without leaving auto mode. B&W mode removed; holding the bottom button switches auto/manual; a
-///           single 1 s hold of A turns off; auto-off after 15 minutes (was an hour);
-///           LED strip sent once per frame. WiFi setup hotspot and remote control over
-///           MQTT (Google Home) added but turned off: WiFi made the LEDs glitch
+/// v1.11.0 - A press skips to the next pattern without leaving auto mode; holding the
+///           bottom button is the only auto/manual switch; a single 1 s hold of A
+///           turns off; auto-off after 15 minutes (was an hour); B&W mode removed;
+///           LED strip sent once per frame; serial takes the button controls. WiFi
+///           setup hotspot and remote control over MQTT (Google Home) added but
+///           turned off: WiFi made the LEDs glitch
 /// v1.10.0 - B&W mode (hold power button), auto-off after an hour idle, whites stay
 ///           white at low brightness (channels round together, correction fades in)
 /// v1.9.2 - Spatial dithering with fixed per-LED thresholds: smooth large fades,
@@ -1530,7 +1532,9 @@ void printHelp() {
   Serial.println("          off = back to patterns");
   Serial.println("Control:  power on / power off, next, auto, manual, pattern N (or name),");
   Serial.println("          bright N / + / -, speed N / + / - (levels 1-6)");
+#if REMOTE_ENABLED
   Serial.println("WiFi:     wifi = status, wifi setup = open setup hotspot, wifi forget");
+#endif
 }
 
 void handleCommand(char *cmd) {
