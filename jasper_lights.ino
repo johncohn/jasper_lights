@@ -5,8 +5,8 @@
 /// @author  John Cohn (patterns adapted from m5lights_v1 / Larry's patterns)
 ///
 /// Starts in auto mode: a new pattern every minute, in a fixed order.
-/// A button (big front button): next pattern, switching to manual mode (patterns
-///   cross-fade); hold 1 s to turn off (deep sleep), press again to turn on
+/// A button (big front button): next pattern (patterns cross-fade; auto mode stays on,
+///   its minute starting over); hold 1 s to turn off (deep sleep), press again to turn on
 /// Top side button (B): cycle through 6 brightness levels
 /// Bottom side button (power button): cycle through 6 speed levels; hold 1 s to switch
 ///   between auto and manual mode
@@ -15,7 +15,7 @@
 ///   turned off (secrets.h.off) because WiFi made the LEDs glitch.
 ///
 /// @changelog
-/// v1.11.0 - B&W mode removed; holding the bottom button switches auto/manual; a
+/// v1.11.0 - A press skips to the next pattern without leaving auto mode. B&W mode removed; holding the bottom button switches auto/manual; a
 ///           single 1 s hold of A turns off; auto-off after 15 minutes (was an hour);
 ///           LED strip sent once per frame. WiFi setup hotspot and remote control over
 ///           MQTT (Google Home) added but turned off: WiFi made the LEDs glitch
@@ -955,9 +955,9 @@ const PatternEntry patternList[] = {
 uint8_t currentPattern = 0;
 bool needsReset = true;  // Next render of currentPattern starts fresh
 
-// Auto mode: move to the next pattern every AUTO_PATTERN_MS. A short press of A
-// switches to manual (A steps through patterns); holding the bottom button switches
-// between auto and manual.
+// Auto mode: move to the next pattern every AUTO_PATTERN_MS. A short press of A skips
+// to the next pattern in either mode (in auto, the minute starts over); holding the
+// bottom button switches between auto and manual.
 #define AUTO_PATTERN_MS 60000
 #define AUTO_OFF_MS (15UL * 60 * 1000)  // Turn off after 15 minutes with no button presses
 #define MODE_PRESS_MS 1000  // Hold the bottom (power) button this long to switch auto/manual
@@ -1490,8 +1490,7 @@ bool handleControl(const char *cmd) {
     powerOn();
   } else if (strcasecmp(cmd, "next") == 0) {
     powerOn();
-    autoMode = false;
-    nextPattern();
+    nextPattern();  // Stays in auto or manual, like the A button
   } else if (strcasecmp(cmd, "auto") == 0 || strcasecmp(cmd, "manual") == 0) {
     powerOn();
     bool wantAuto = (strcasecmp(cmd, "auto") == 0);
@@ -1736,9 +1735,7 @@ void loop() {
     } else if (SHOWING) {
       stopShow();
     } else {
-      if (autoMode) Serial.println("Manual mode");
-      autoMode = false;
-      nextPattern();
+      nextPattern();  // Stays in auto or manual; nextPattern() restarts auto's minute
     }
     updateDisplay();
   }

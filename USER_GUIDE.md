@@ -6,7 +6,7 @@ Hold the M5 with the screen facing you and the writing upright. The big button u
 
 | Button | Press | Hold |
 |---|---|---|
-| **M5** (big front button) | Next pattern (switches to manual) | **1 s**: turn off |
+| **M5** (big front button) | Next pattern | **1 s**: turn off |
 | **Top** | Brightness (6 levels, wraps around) | – |
 | **Bottom** | Speed (6 levels, wraps around) | **1 s**: switch between auto and manual (switches at 1 s; let go then) |
 
@@ -15,7 +15,9 @@ When you've held the M5 button long enough, the screen says *Release to turn OFF
 ## Modes
 
 - **Auto** (normal): a new pattern every minute. The lights always start in auto.
-- **Manual**: press the M5 button to step through patterns; the lights stay on the one you pick. Hold the Bottom button 1 s to go back to auto.
+- **Manual**: hold the Bottom button 1 s to switch to manual; the lights then stay on one pattern. Press the M5 button to pick another. Hold the Bottom button 1 s again to go back to auto.
+
+Pressing the M5 button in auto mode skips to the next pattern and stays in auto.
 
 ## Turning off and on
 
