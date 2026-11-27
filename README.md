@@ -10,19 +10,28 @@ The lights start in **auto mode**: a new pattern every minute (`AUTO_PATTERN_MS`
 
 - **A button** (big front M5 button) does everything important:
   - **Short press**: next pattern, and switch to **manual mode** (the lights stay on the chosen pattern). The screen shows AUTO or MAN.
-  - **Hold 1.5 s** and release: back to auto mode.
-  - **Hold 3.5 s**: turn **off** (LEDs dark, screen off, ESP32 in deep sleep). The screen tells you what releasing will do.
+  - **Hold 1 s** and release: turn **off** (LEDs dark, screen off, ESP32 in deep sleep). Once it's held long enough the screen says *Release to turn OFF*.
   - **Press while off**: turn back on.
 - **Top button** (side button nearest the top, holding the M5 with the screen facing you and the writing upright): cycle through 6 brightness levels (4, 8, 15, 25, 40, 60), then back to the lowest. Starts at level 4 (25).
-- **Bottom button** (the other side button; also the M5's power button): **hold 1 s** to toggle **black & white mode** (only the B&W patterns, in auto and manual; the screen turns black and says *Jasper B&W*). Short press: cycle through 6 speed levels: 0.4x, 1x, 2x, 3.5x, 6x, 10x. Starts at level 2 (1x, the speed the patterns were designed at). Every pattern scales its motion by this, except the cross-fade and Map Check. Holding it ~6 s still turns the M5 off in hardware.
+- **Bottom button** (the other side button; also the M5's power button): **hold 1 s** to switch between **auto and manual mode**. It switches (and the screen shows AUTO or MAN) as soon as 1 s is reached, so there's no reason to keep holding toward the ~6 s hardware power-off. Short press: cycle through 6 speed levels: 0.4x, 1x, 2x, 3.5x, 6x, 10x. Starts at level 2 (1x, the speed the patterns were designed at). Every pattern scales its motion by this, except the cross-fade and Map Check. Holding it ~6 s still turns the M5 off in hardware.
 
 The screen shows the current pattern, and brightness and speed as rows of boxes.
 
-It **turns itself off after an hour** without button presses or serial commands (`AUTO_OFF_MS`).
+It **turns itself off after 15 minutes** without button presses or serial commands (`AUTO_OFF_MS`).
 
-Brightness, speed, B&W mode and the current pattern are saved in flash whenever they change and restored at power-up or when turned back on. It always starts in auto mode.
+Brightness, speed and the current pattern are saved in flash whenever they change and restored at power-up or when turned back on. It always starts in auto mode.
 
-"Off" keeps the M5's power-hold pin on during deep sleep, so the M5 wakes with the A button instead of needing the Bottom (power) button. The Plus2 can't switch off its 5V output in software, so the LED strip stays powered (dark) while off and its idle current is the main battery drain.
+Off is a deep sleep. It keeps the M5's power-hold pin on, so the M5 wakes with the A button instead of needing the Bottom (power) button. The Plus2 can't switch off its 5V output in software, so the LED strip stays powered (dark) while off and its idle current is the main battery drain.
+
+## Serial control
+
+The serial monitor (115200 baud) takes the same controls as the buttons: `power on`, `power off`, `next`, `auto`, `manual`, `pattern N` or `pattern NAME`, `bright N` / `+` / `-`, `speed N` / `+` / `-` (levels 1-6). Anything but `power off` also turns the lights on. See `handleControl()`.
+
+## WiFi remote control (built, but turned off)
+
+`wifi_remote.ino` adds WiFi (a setup hotspot), remote control over MQTT (EMQX Cloud) and Google Home. It's **turned off** because WiFi made the LEDs glitch (green flashes, stutters), even with the LED driver's buffer at its maximum and the strip sent only once per frame. It's only compiled in when `secrets.h` exists; that file is now `secrets.h.off`. The Cloud Run / Google Home server side was not kept.
+
+With it on: the Top button held 3 s opens a **Jasper Lights Setup** hotspot for choosing the home network; the screen's bottom right shows the connection status; "off" becomes a soft off that keeps listening (deep sleep below 3.65 V on battery, `LOW_BATTERY_MV`); and the serial commands above also arrive over MQTT on `jasperlights/cmd` (state goes out, retained, on `jasperlights/state`, `jasperlights/patterns` and `jasperlights/online`). Serial `wifi`, `wifi setup` and `wifi forget` manage it.
 
 ## Patterns
 
@@ -88,7 +97,7 @@ Segment Map colors: strings A-1..A-6 are red, yellow, green, cyan, blue, magenta
 
 Changing a run's end also moves the next run's start if they were touching (and the same for start). When you finish, the map is saved to flash and printed as C code; paste it over `defaultRuns[]` to make it permanent. A saved map overrides `defaultRuns[]` until you type `reset`.
 
-Serial commands outside tuning: `speed N` (1-6), `fps` (strip refresh rate), `tune`, `map` (print the current map as C code), `reset` (forget the saved map and use `defaultRuns[]`).
+Serial commands outside tuning: the remote commands above (`speed N`, `bright +`, …), `wifi`, `fps` (strip refresh rate), `tune`, `map` (print the current map as C code), `reset` (forget the saved map and use `defaultRuns[]`).
 
 ### Checking the map
 
@@ -120,12 +129,14 @@ Note: the Arduino builder auto-generates function prototypes near the top of the
 
 ## Build
 
-Board: **M5StickCPlus2** (`m5stack:esp32:m5stack_stickc_plus2`). Libraries: M5StickCPlus2, FastLED.
+Board: **M5StickCPlus2** (`m5stack:esp32:m5stack_stickc_plus2`). Libraries: M5StickCPlus2, FastLED, and (only with WiFi on) WiFiManager (tzapu), PubSubClient and ArduinoJson.
 
 ```
-arduino-cli compile --fqbn m5stack:esp32:m5stack_stickc_plus2 jasper_lights
-arduino-cli compile --fqbn m5stack:esp32:m5stack_stickc_plus2 -u -p /dev/cu.usbserial-XXXX jasper_lights
+jasper_lights/upload.sh             # build and upload (finds the M5's port)
+jasper_lights/upload.sh --compile   # build only
 arduino-cli monitor -p /dev/cu.usbserial-XXXX -c baudrate=115200
 ```
+
+`upload.sh` passes compiler flags that give FastLED's LED driver its full buffer (8 RMT blocks), which matters if WiFi is ever turned back on. The Arduino IDE's Upload button can't pass them (the sketch prints a warning), but without WiFi the IDE works too.
 
 Close the serial monitor before uploading; it holds the port.

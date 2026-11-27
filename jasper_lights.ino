@@ -1,19 +1,24 @@
 /// @file    jasper_lights.ino
 /// @brief   Simple M5StickC Plus2 LED blinker for Jasper
-/// @version 1.10.0
-/// @date    2026-09-26
+/// @version 1.11.0
+/// @date    2026-11-26
 /// @author  John Cohn (patterns adapted from m5lights_v1 / Larry's patterns)
 ///
 /// Starts in auto mode: a new pattern every minute, in a fixed order.
 /// A button (big front button): next pattern, switching to manual mode (patterns
-///   cross-fade); hold 1.5 s to go back to auto mode; hold 3.5 s to turn off (deep sleep),
-///   press again to turn on
+///   cross-fade); hold 1 s to turn off (deep sleep), press again to turn on
 /// Top side button (B): cycle through 6 brightness levels
-/// Bottom side button (power button): cycle through 6 speed levels; hold 1 s to toggle
-///   black & white mode (only B&W patterns)
-/// Turns itself off after an hour without button presses
+/// Bottom side button (power button): cycle through 6 speed levels; hold 1 s to switch
+///   between auto and manual mode
+/// Turns itself off after 15 minutes without button presses
+/// WiFi remote control (wifi_remote.ino) is built only when secrets.h exists. It's
+///   turned off (secrets.h.off) because WiFi made the LEDs glitch.
 ///
 /// @changelog
+/// v1.11.0 - B&W mode removed; holding the bottom button switches auto/manual; a
+///           single 1 s hold of A turns off; auto-off after 15 minutes (was an hour);
+///           LED strip sent once per frame. WiFi setup hotspot and remote control over
+///           MQTT (Google Home) added but turned off: WiFi made the LEDs glitch
 /// v1.10.0 - B&W mode (hold power button), auto-off after an hour idle, whites stay
 ///           white at low brightness (channels round together, correction fades in)
 /// v1.9.2 - Spatial dithering with fixed per-LED thresholds: smooth large fades,
@@ -48,12 +53,31 @@
 
 #include <M5StickCPlus2.h>
 #include <FastLED.h>
+
+// With WiFi on, the LED driver needs its biggest buffer or WiFi interrupts cause
+// green flashes and stutters. FastLED builds its driver separately, so this has to
+// be a compiler flag: build with ./upload.sh, not the Arduino IDE's Upload button.
+#if !defined(FASTLED_RMT_STATIC_ALLOCATION) || FASTLED_RMT_STATIC_ALLOCATION != 1
+#warning "Built without the LED driver flags: expect glitches with WiFi on. Use ./upload.sh"
+#endif
 #include <Preferences.h>
 #include <driver/gpio.h>
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
 
-#define VERSION "1.10.0"
+#define VERSION "1.11.0"
+
+// Remote control is built in only when secrets.h (MQTT broker login) exists
+#if __has_include("secrets.h")
+#include "secrets.h"
+#define REMOTE_ENABLED 1
+#else
+#define REMOTE_ENABLED 0
+#endif
+
+enum NetStatus { NET_DISABLED, NET_SETUP, NET_CONNECTING, NET_NO_SERVER, NET_ONLINE };
+extern volatile NetStatus netStatus;
+bool lightsOn = true;  // False while off but still listening for remote commands
 
 // Hardware config
 #define LED_PIN 32
@@ -898,31 +922,30 @@ typedef void (*Pattern)(bool reset);
 struct PatternEntry {
   Pattern fn;
   const char* name;
-  bool bw;  // Black & white only: included in B&W mode
 };
 
 // Fixed play order, mixing color, black & white, and structure patterns
 const PatternEntry patternList[] = {
-  { solidColor,     "Solid",           false },
-  { coneStripes,    "Cone Stripes",    true  },
-  { rainbowSpiral,  "Rainbow Spiral",  false },
-  { starryNight,    "Starry Night",    true  },
-  { fallingRings,   "Falling Rings",   false },
-  { rainbow,        "Rainbow",         false },
-  { pinwheel,       "Pinwheel",        true  },
-  { ripples,        "Ripples",         false },
-  { whiteComet,     "White Comet",     true  },
-  { risingRainbow,  "Rising Rainbow",  false },
-  { bwStripes,      "B&W Stripes",     true  },
-  { slowOrbit,      "Slow Orbit",      false },
-  { breathe,        "Breathe",         false },
-  { bwSpiral,       "B&W Spiral",      true  },
-  { sineWaveChase,  "Sine Chase",      false },
-  { stringsAndRing, "Strings & Ring",  true  },
-  { pastelTwinkle,  "Pastel Twinkle",  false },
+  { solidColor,     "Solid" },
+  { coneStripes,    "Cone Stripes" },
+  { rainbowSpiral,  "Rainbow Spiral" },
+  { starryNight,    "Starry Night" },
+  { fallingRings,   "Falling Rings" },
+  { rainbow,        "Rainbow" },
+  { pinwheel,       "Pinwheel" },
+  { ripples,        "Ripples" },
+  { whiteComet,     "White Comet" },
+  { risingRainbow,  "Rising Rainbow" },
+  { bwStripes,      "B&W Stripes" },
+  { slowOrbit,      "Slow Orbit" },
+  { breathe,        "Breathe" },
+  { bwSpiral,       "B&W Spiral" },
+  { sineWaveChase,  "Sine Chase" },
+  { stringsAndRing, "Strings & Ring" },
+  { pastelTwinkle,  "Pastel Twinkle" },
 #if INCLUDE_TEST_PATTERNS
-  { segmentMap,     "Segment Map",     false },
-  { mapCheck,       "Map Check",       false },
+  { segmentMap,     "Segment Map" },
+  { mapCheck,       "Map Check" },
 #endif
 };
 
@@ -933,14 +956,15 @@ uint8_t currentPattern = 0;
 bool needsReset = true;  // Next render of currentPattern starts fresh
 
 // Auto mode: move to the next pattern every AUTO_PATTERN_MS. A short press of A
-// switches to manual (A steps through patterns); a long press goes back to auto.
+// switches to manual (A steps through patterns); holding the bottom button switches
+// between auto and manual.
 #define AUTO_PATTERN_MS 60000
-#define AUTO_OFF_MS (60UL * 60 * 1000)  // Turn off after an hour with no button presses
-#define BW_PRESS_MS 1000   // Hold the bottom (power) button this long to toggle B&W mode
-#define AUTO_PRESS_MS 1500  // Hold A this long (and release) to go back to auto mode
-#define OFF_PRESS_MS 3500   // Hold A this long to turn off; press A again to turn on
+#define AUTO_OFF_MS (15UL * 60 * 1000)  // Turn off after 15 minutes with no button presses
+#define MODE_PRESS_MS 1000  // Hold the bottom (power) button this long to switch auto/manual
+#define OFF_PRESS_MS 1000   // Hold A this long (and release) to turn off; press A to turn on
+#define SETUP_PRESS_MS 3000 // Hold the top button this long to open the WiFi setup hotspot
+#define LOW_BATTERY_MV 3650 // While off on battery, below this: deep sleep (WiFi off)
 bool autoMode = true;
-bool bwMode = false;          // Only black & white patterns
 unsigned long lastActivityTime = 0;  // Last button press or serial command, for auto-off
 unsigned long patternStartTime = 0;
 
@@ -950,18 +974,13 @@ uint8_t fadeFromPattern = 0;
 unsigned long fadeStartTime = 0;
 CRGB ledsOld[NUM_LEDS];
 
-// Next pattern after 'from' that's allowed in the current mode
-int nextAllowedPattern(int from) {
-  for (int i = 1; i <= NUM_PATTERNS; i++) {
-    int p = (from + i) % NUM_PATTERNS;
-    if (!bwMode || patternList[p].bw) return p;
-  }
-  return from;
+void nextPattern() {
+  goToPattern((currentPattern + 1) % NUM_PATTERNS);
 }
 
-void nextPattern() {
+void goToPattern(int p) {
   fadeFromPattern = currentPattern;
-  currentPattern = nextAllowedPattern(currentPattern);
+  currentPattern = p;
   patternStartTime = millis();
   saveSettings();
   needsReset = true;
@@ -1002,7 +1021,6 @@ void saveSettings() {
   prefs.begin("jlstate", false);
   prefs.putUChar("bright", brightnessIndex);
   prefs.putUChar("speed", speedIndex);
-  prefs.putBool("bw", bwMode);
   prefs.putString("pattern", patternList[currentPattern].name);
   prefs.end();
 }
@@ -1011,7 +1029,6 @@ void loadSettings() {
   prefs.begin("jlstate", true);
   brightnessIndex = min((int)prefs.getUChar("bright", brightnessIndex), (int)NUM_BRIGHTNESS_LEVELS - 1);
   speedIndex = min((int)prefs.getUChar("speed", speedIndex), (int)NUM_SPEED_LEVELS - 1);
-  bwMode = prefs.getBool("bw", false);
   String name = prefs.getString("pattern", "");
   prefs.end();
 
@@ -1019,12 +1036,13 @@ void loadSettings() {
   for (int i = 0; i < NUM_PATTERNS; i++) {
     if (name == patternList[i].name) currentPattern = i;
   }
-  if (bwMode && !patternList[currentPattern].bw) currentPattern = nextAllowedPattern(currentPattern);
 }
 
-// ===== OFF (DEEP SLEEP) =====
-// Holding A for 3.5 s turns everything off: LEDs dark, screen off, and the ESP32 in
-// deep sleep, drawing almost nothing. Pressing A wakes it, which restarts the sketch
+// ===== OFF =====
+// Holding A for 1 s turns the lights off. With WiFi set up it's a soft off: LEDs and
+// screen dark, WiFi still connected so Google Home can turn it back on. Without WiFi,
+// or on a low battery, it's a deep sleep instead:
+// LEDs dark, screen off, and the ESP32 in deep sleep, drawing almost nothing. Pressing A wakes it, which restarts the sketch
 // and restores the saved settings. The power-hold pin is kept high during sleep, or
 // on battery the M5 would lose power entirely and need the power button to restart.
 #define BTN_A_PIN GPIO_NUM_37
@@ -1060,19 +1078,45 @@ void turnOff() {
   esp_deep_sleep_start();
 }
 
-// Shown while A is held long enough to do something on release
-void showHoldScreen(bool off) {
-  M5.Display.fillScreen(off ? BLACK : DARKGREY);
+bool batteryLow() {
+  int mv = M5.Power.getBatteryVoltage();
+  return mv > 1000 && mv < LOW_BATTERY_MV;  // Ignore nonsense readings
+}
+
+uint8_t screenBrightness = 0;  // Restored when turned back on
+
+void powerOff(const char *why) {
+  Serial.printf("Off (%s)\n", why);
+  if (!netConfigured() || batteryLow()) turnOff();  // Deep sleep; doesn't return
+  lightsOn = false;
+  saveSettings();
+  fill_solid(leds, NUM_LEDS, CRGB::Black);
+  isFading = false;
+  screenBrightness = M5.Display.getBrightness();
+  M5.Display.setBrightness(0);
+  M5.Display.sleep();
+}
+
+void powerOn() {
+  if (lightsOn) return;
+  lightsOn = true;
+  autoMode = true;  // Always starts in auto, as at power-up
+  patternStartTime = millis();
+  lastActivityTime = millis();
+  needsReset = true;
+  M5.Display.wakeup();
+  M5.Display.setBrightness(screenBrightness);
+  Serial.println("On");
+  updateDisplay();
+}
+
+// Shown once A has been held long enough to turn off on release
+void showHoldScreen() {
+  M5.Display.fillScreen(BLACK);
   M5.Display.setTextColor(WHITE);
   M5.Display.setTextSize(2);
-  if (off) {
-    M5.Display.drawString("Release to", 10, 40);
-    M5.Display.drawString("turn OFF", 10, 66);
-  } else {
-    M5.Display.drawString("Release: AUTO", 10, 40);
-    M5.Display.drawString("Keep holding:", 10, 74);
-    M5.Display.drawString("OFF", 10, 98);
-  }
+  M5.Display.drawString("Release to", 10, 40);
+  M5.Display.drawString("turn OFF", 10, 66);
 }
 
 // ===== DISPLAY =====
@@ -1110,11 +1154,11 @@ void updateDisplay() {
     return;
   }
 
-  M5.Display.fillScreen(bwMode ? BLACK : NAVY);
+  M5.Display.fillScreen(NAVY);
   M5.Display.setTextColor(WHITE);
 
   M5.Display.setTextSize(2);
-  M5.Display.drawString(bwMode ? "Jasper B&W" : "Jasper Lights", 10, 6);
+  M5.Display.drawString("Jasper Lights", 10, 6);
   M5.Display.setTextColor(autoMode ? GREEN : ORANGE);
   M5.Display.drawString(autoMode ? "AUTO" : "MAN", autoMode ? 182 : 194, 6);
 
@@ -1134,8 +1178,18 @@ void updateDisplay() {
   }
 
   M5.Display.setTextSize(1);
-  M5.Display.drawString("M5 hold 1.5s:auto 3.5s:off Bot hold:B&W", 4, 110);
+  if (netStatus == NET_SETUP) {
+    M5.Display.setTextColor(YELLOW);
+    M5.Display.drawString("WiFi setup: join 'Jasper Lights Setup'", 4, 110);
+    M5.Display.setTextColor(WHITE);
+  } else {
+    M5.Display.drawString("M5 hold: off   Bottom hold: auto/manual", 4, 110);
+  }
   M5.Display.drawString("v" VERSION " by zatar", 10, 122);
+  static const char *netNames[] = { "", "WiFi setup", "WiFi...", "No server", "Online" };
+  static const uint16_t netColors[] = { WHITE, YELLOW, ORANGE, ORANGE, GREEN };
+  M5.Display.setTextColor(netColors[netStatus]);
+  M5.Display.drawRightString(netNames[netStatus], 234, 122);
 }
 
 void setSpeed(int index) {
@@ -1149,15 +1203,18 @@ void nextSpeed() {
   setSpeed((speedIndex + 1) % NUM_SPEED_LEVELS);
 }
 
-void toggleBwMode() {
-  bwMode = !bwMode;
-  Serial.printf("B&W mode %s\n", bwMode ? "on" : "off");
-  if (bwMode && !patternList[currentPattern].bw) nextPattern();  // Also saves
-  else saveSettings();
+void toggleAutoMode() {
+  autoMode = !autoMode;
+  patternStartTime = millis();  // A full minute on this pattern before auto moves on
+  Serial.println(autoMode ? "Auto mode" : "Manual mode");
 }
 
 void nextBrightness() {
-  brightnessIndex = (brightnessIndex + 1) % NUM_BRIGHTNESS_LEVELS;
+  setBrightnessLevel((brightnessIndex + 1) % NUM_BRIGHTNESS_LEVELS);
+}
+
+void setBrightnessLevel(int index) {
+  brightnessIndex = index;
   saveSettings();
   Serial.printf("Brightness -> %d/%d (%d)\n", brightnessIndex + 1, NUM_BRIGHTNESS_LEVELS,
                 brightnessLevels[brightnessIndex]);
@@ -1404,13 +1461,77 @@ void renderShow() {
   }
 }
 
+// Commands shared by the serial monitor and remote control (Google Home). Returns
+// false if it isn't one. Anything but "power off" also turns the lights on.
+//   power on | power off | power toggle | next | auto | manual
+//   pattern N | pattern NAME | bright N | bright + | bright - | speed N | speed + | speed -
+int levelArg(const char *arg, int current, int count) {
+  if (strcmp(arg, "+") == 0) return min(current + 1, count - 1);
+  if (strcmp(arg, "-") == 0) return max(current - 1, 0);
+  int n = atoi(arg);
+  return (n >= 1 && n <= count) ? n - 1 : -1;
+}
+
+bool handleControl(const char *cmd) {
+  lastActivityTime = millis();
+  if (strcasecmp(cmd, "power off") == 0) {
+    if (lightsOn) powerOff("remote");
+    return true;
+  }
+  if (strcasecmp(cmd, "power toggle") == 0) {
+    if (lightsOn) powerOff("remote");
+    else powerOn();
+    return true;
+  }
+
+  bool ok = true;
+  int n;
+  if (strcasecmp(cmd, "power on") == 0) {
+    powerOn();
+  } else if (strcasecmp(cmd, "next") == 0) {
+    powerOn();
+    autoMode = false;
+    nextPattern();
+  } else if (strcasecmp(cmd, "auto") == 0 || strcasecmp(cmd, "manual") == 0) {
+    powerOn();
+    bool wantAuto = (strcasecmp(cmd, "auto") == 0);
+    if (autoMode != wantAuto) toggleAutoMode();
+  } else if (strncasecmp(cmd, "pattern ", 8) == 0) {
+    const char *arg = cmd + 8;
+    int p = -1;
+    for (int i = 0; i < NUM_PATTERNS; i++) {
+      if (strcasecmp(arg, patternList[i].name) == 0) p = i;
+    }
+    if (p < 0 && (n = atoi(arg)) >= 1 && n <= (int)NUM_PATTERNS) p = n - 1;
+    if (p < 0) return false;
+    powerOn();
+    autoMode = false;
+    if (p != currentPattern) goToPattern(p);
+  } else if (strncasecmp(cmd, "bright ", 7) == 0) {
+    if ((n = levelArg(cmd + 7, brightnessIndex, NUM_BRIGHTNESS_LEVELS)) < 0) return false;
+    powerOn();
+    setBrightnessLevel(n);
+  } else if (strncasecmp(cmd, "speed ", 6) == 0) {
+    if ((n = levelArg(cmd + 6, speedIndex, NUM_SPEED_LEVELS)) < 0) return false;
+    powerOn();
+    setSpeed(n);
+  } else {
+    ok = false;
+  }
+  if (ok && lightsOn) updateDisplay();
+  return ok;
+}
+
 void printHelp() {
   Serial.println("Commands: tune = tune the LED map, map = print the map,");
   Serial.println("          reset = forget tuned map and use the defaults in the code");
   Serial.println("          show A-5 / show 1-2 = light a segment, run N = light run N (1-18),");
   Serial.println("          pixel N = light pixel N (0 = top) on every string, then + / - to step,");
   Serial.println("          skip R K = hide K LEDs at the top of string run R (negative: gap),");
-  Serial.println("          off = back to patterns, speed N = set speed level 1-6");
+  Serial.println("          off = back to patterns");
+  Serial.println("Control:  power on / power off, next, auto, manual, pattern N (or name),");
+  Serial.println("          bright N / + / -, speed N / + / - (levels 1-6)");
+  Serial.println("WiFi:     wifi = status, wifi setup = open setup hotspot, wifi forget");
 }
 
 void handleCommand(char *cmd) {
@@ -1418,18 +1539,23 @@ void handleCommand(char *cmd) {
   while (*cmd == ' ') cmd++;
   int a, b;
 
+  if (!tuning && !SHOWING && handleControl(cmd)) return;
+
   if (!tuning) {
-    if (strcasecmp(cmd, "tune") == 0) startTuning();
+    if (strcasecmp(cmd, "wifi") == 0) {
+      static const char *names[] = { "off (no secrets.h)", "setup hotspot open", "connecting to WiFi",
+                                     "WiFi ok, can't reach the MQTT broker", "online" };
+      Serial.printf("WiFi: %s\n", names[netStatus]);
+    }
+    else if (strcasecmp(cmd, "wifi setup") == 0) netStartSetup();
+    else if (strcasecmp(cmd, "wifi forget") == 0) netForget();
+    else if (strcasecmp(cmd, "tune") == 0) startTuning();
     else if (strcasecmp(cmd, "map") == 0) printRuns();
     else if (strcasecmp(cmd, "reset") == 0) resetRuns();
     else if (strcasecmp(cmd, "off") == 0) stopShow();
     else if (strcasecmp(cmd, "fps") == 0) {
       fpsStartCount = showCount;
       fpsStartTime = millis();
-    }
-    else if (sscanf(cmd, "speed %d", &a) == 1) {
-      if (a < 1 || a > (int)NUM_SPEED_LEVELS) Serial.printf("  ?? Speed should be 1-%d\n", NUM_SPEED_LEVELS);
-      else setSpeed(a - 1);
     }
     else if (strncasecmp(cmd, "show ", 5) == 0) {
       uint8_t seg = parseSegment(cmd + 5);
@@ -1539,8 +1665,9 @@ void setup() {
   loadSettings();
   initOutput();
   patternStartTime = millis();
-  M5.BtnA.setHoldThresh(AUTO_PRESS_MS);
-  M5.BtnPWR.setHoldThresh(BW_PRESS_MS);
+  M5.BtnA.setHoldThresh(OFF_PRESS_MS);  // Shorter presses count as clicks (next pattern)
+  M5.BtnPWR.setHoldThresh(MODE_PRESS_MS);
+  M5.BtnB.setHoldThresh(SETUP_PRESS_MS);
   lastActivityTime = millis();
 
   // After waking with A, wait for it to be released so that press isn't
@@ -1553,29 +1680,55 @@ void setup() {
     M5.update();
   }
 
+  netBegin();
   updateDisplay();
-  Serial.println("Jasper Lights v" VERSION " ready! M5: next pattern (hold 1.5 s: auto, 3.5 s: off), top: brightness, bottom: speed (hold: B&W)");
-  Serial.printf("%s mode%s, starting with %s, brightness %d/%d, speed %d/%d\n",
-                autoMode ? "Auto" : "Manual", bwMode ? " (B&W)" : "", patternList[currentPattern].name,
+  Serial.println("Jasper Lights v" VERSION " ready! M5: next pattern (hold: off), top: brightness, bottom: speed (hold: auto/manual)");
+  Serial.printf("%s mode, starting with %s, brightness %d/%d, speed %d/%d\n",
+                autoMode ? "Auto" : "Manual", patternList[currentPattern].name,
                 brightnessIndex + 1, NUM_BRIGHTNESS_LEVELS, speedIndex + 1, NUM_SPEED_LEVELS);
   printHelp();
 }
 
 void loop() {
-  // Animation advances at FRAME_MS; the strip is refreshed every pass (as fast
-  // as it can take data) so the dithering in showLeds() can smooth the fades
+  // Animation advances and the strip is sent once every FRAME_MS (~60 Hz). The
+  // dithering is spatial, so refreshing faster gains nothing, and with WiFi on, a
+  // strip that's always mid-send is more exposed to glitches (see upload.sh)
   static unsigned long lastFrameTime = 0;
   unsigned long now = millis();
   if (now - lastFrameTime < FRAME_MS) {
-    showLeds();
+    delay(1);
     return;
   }
   // Keep an even frame rate; resync if we fall far behind
   lastFrameTime = (now - lastFrameTime > 4 * FRAME_MS) ? now : lastFrameTime + FRAME_MS;
 
   handleSerial();
-
+  netPoll();
   M5.update();
+
+  // Redraw when the WiFi status changes
+  static NetStatus shownNet = netStatus;
+  if (netStatus != shownNet) {
+    shownNet = netStatus;
+    if (lightsOn) updateDisplay();
+  }
+
+  // Off but listening: dark, and only a press of A (or a remote command) turns it on
+  if (!lightsOn) {
+    if (M5.BtnA.wasReleased()) powerOn();
+    static unsigned long lastBatteryCheck = 0;
+    if (millis() - lastBatteryCheck > 30000) {
+      lastBatteryCheck = millis();
+      if (batteryLow()) {
+        Serial.println("Battery low");
+        turnOff();  // Deep sleep; doesn't return
+      }
+    }
+    fill_solid(leds, NUM_LEDS, CRGB::Black);
+    showLeds();
+    return;
+  }
+
   if (M5.BtnA.wasClicked()) {
     if (tuning) {
       char accept[] = "";
@@ -1589,31 +1742,20 @@ void loop() {
     }
     updateDisplay();
   }
-  // Long presses: the screen says what releasing will do
-  static uint8_t holdStage = 0;  // 1: held for auto, 2: held for off
-  if (M5.BtnA.isPressed()) {
-    if (holdStage < 2 && M5.BtnA.pressedFor(OFF_PRESS_MS)) {
-      holdStage = 2;
-      showHoldScreen(true);
-    } else if (holdStage < 1 && M5.BtnA.pressedFor(AUTO_PRESS_MS)) {
-      holdStage = 1;
-      showHoldScreen(false);
-    }
+  // Long press of A: off when released (the screen says so once it's held long enough)
+  static bool holdingForOff = false;
+  if (M5.BtnA.isPressed() && !holdingForOff && M5.BtnA.pressedFor(OFF_PRESS_MS)) {
+    holdingForOff = true;
+    showHoldScreen();
   }
   if (M5.BtnA.wasReleased()) {
-    if (holdStage == 2) turnOff();  // Doesn't return
-    if (holdStage == 1) {
-      if (!tuning && !SHOWING && !autoMode) {
-        autoMode = true;
-        patternStartTime = millis();
-        saveSettings();
-        Serial.println("Auto mode");
-      }
-      updateDisplay();
+    if (holdingForOff) {
+      holdingForOff = false;
+      powerOff("button");
+      return;
     }
-    holdStage = 0;
   }
-  if (holdStage == 2) {  // About to turn off: go dark now
+  if (holdingForOff) {  // About to turn off: go dark now
     fill_solid(leds, NUM_LEDS, CRGB::Black);
     showLeds();
     return;
@@ -1622,28 +1764,34 @@ void loop() {
     nextPattern();
     updateDisplay();
   }
-  if (M5.BtnB.wasPressed()) {
+  if (M5.BtnB.wasClicked()) {
     nextBrightness();
     updateDisplay();
   }
-  // Bottom (power) button: click = speed, hold 1 s = B&W mode. Holding it
+  if (M5.BtnB.wasHold()) {
+    netStartSetup();
+  }
+  // Bottom (power) button: click = speed, hold 1 s = auto/manual (wasHold() fires at
+  // 1 s while still held, so the screen changes at once). Holding it
   // ~6 s still powers the M5 off in hardware.
   if (M5.BtnPWR.wasClicked()) {
     nextSpeed();
     updateDisplay();
   }
-  if (M5.BtnPWR.wasHold()) {
-    toggleBwMode();
+  if (M5.BtnPWR.wasHold() && !tuning && !SHOWING) {
+    toggleAutoMode();
     updateDisplay();
   }
 
-  // Any button press counts as activity; auto-off after an hour without any
+  // Any button press counts as activity (as do serial and remote commands);
+  // auto-off after 15 minutes without any
   if (M5.BtnA.wasPressed() || M5.BtnB.wasPressed() || M5.BtnPWR.wasPressed()) {
     lastActivityTime = millis();
   }
   if (millis() - lastActivityTime >= AUTO_OFF_MS) {
-    Serial.println("Auto-off after an hour without button presses");
-    turnOff();  // Doesn't return
+    powerOff("15 minutes without button presses");
+    showLeds();
+    return;
   }
 
   if (tuning) renderTune();
